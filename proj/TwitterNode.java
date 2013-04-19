@@ -88,7 +88,7 @@ public class TwitterNode extends RIONode {
 
         //Server = 0
         //Client = 1
-
+        
         if (operation.equals("create")) {
             if(parameters == null) {
                 // no username specified
@@ -123,12 +123,18 @@ public class TwitterNode extends RIONode {
             callback("logout_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
         } else if(operation.equals("post")) {
         	
+        	callback("post_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
         } else if(operation.equals("add")) {
-
+        	
+        	callback("add_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
         } else if(operation.equals("delete")) {
-
+        	
+        	callback("delete_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
         } else if(operation.equals("read")) {
-
+        	
+        	callback("read_callback", new String[0], new Object[0]);
+        } else {
+        	System.out.println("Unknown operation: "+operation);
         }
     }
 
@@ -189,6 +195,66 @@ public class TwitterNode extends RIONode {
         } else {
             //TODO retry
             callback("logout_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+        }
+    }
+    
+    public void delete_callback(String parameters) {
+    	//TODO test
+    	System.out.println("delete_callback called: " + parameters);
+        boolean all_acked = allAcked();
+        outstanding_ack.clear();
+        acked.clear();
+        if(all_acked) {
+            String response = packetBytesToString(this.msg);
+            //TODO stuff
+        } else {
+        	// retry
+            callback("delete_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+        }
+    }
+    
+    public void post_callback(String parameters) {
+    	//TODO test
+    	System.out.println("post_callback called: " + parameters);
+        boolean all_acked = allAcked();
+        outstanding_ack.clear();
+        acked.clear();
+        if(all_acked) {
+            String response = packetBytesToString(this.msg);
+            //TODO stuff
+        } else {
+        	// retry
+            callback("post_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+        }
+    }
+    
+    public void add_callback(String parameters) {
+    	//TODO test
+    	System.out.println("login_callback called: " + parameters);
+        boolean all_acked = allAcked();
+        outstanding_ack.clear();
+        acked.clear();
+        if(all_acked) {
+            String response = packetBytesToString(this.msg);
+            //TODO stuff
+        } else {
+        	// retry
+            callback("add_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+        }
+    }
+    
+    public void read_callback() {
+    	//TODO test
+    	System.out.println("read_callback called");
+        boolean all_acked = allAcked();
+        outstanding_ack.clear();
+        acked.clear();
+        if(all_acked) {
+            String response = packetBytesToString(this.msg);
+            //TODO stuff
+        } else {
+        	// retry
+            callback("read_callback", new String[0], new Object[0]);
         }
     }
 
