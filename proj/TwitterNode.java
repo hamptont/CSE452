@@ -21,35 +21,37 @@ public class TwitterNode extends RIONode {
 
     @Override
     public void onRIOReceive(Integer from, int protocol, byte[] msg) {
-        //client waits for ACK
-        System.out.println("onRIOReceive");
-
         //msg from server
         if(from == 0) {
             //Client
+            System.out.println("message received by client: " + packetBytesToString(msg));
             this.from = from;
             this.protocol = protocol;
             this.msg = msg;
-        //    this.acked = true;
             acked.put(seq_num, true);
         }
         //msg from client
         if(from == 1){
             //Server
             String message = packetBytesToString(msg);
+            System.out.println("message received by server: " + message);
             String command = message.split("\\s")[1];
-            System.out.println("message: " + command);
-            String response = "unknown command: " + command;
+            String response = "";
             if(command.equals("create")) {
                 response = "success";
                 //TODO create files
                 //check that username is not taken, else return failure
             }else if(command.equals("append")) {
+                //TODO impliment method
                 response = "todo";
             }else if(command.equals("read")) {
+                //TODO impliment method
                 response = "todo";
             }else if(command.equals("delete")){
+                //TODO impliment method
                 response = "todo";
+            }else{
+                response = "unknown command: " + command;
             }
             RIOSend(1, Protocol.RIOTEST_PKT, response.getBytes());
         }
@@ -79,6 +81,7 @@ public class TwitterNode extends RIONode {
         }
 
         /*
+        Twitter requirements from project 1 write up:
         Create a user
         Login/logout as user
         Post to a twitter stream
@@ -94,12 +97,10 @@ public class TwitterNode extends RIONode {
                 // no username specified
                 System.out.println("No username specified. Unable to create account.");
             } else {
-                System.out.println("RIOSEND");
-
-                create_userfiles(parameters);
+                rcp_create(parameters);
+                callback("create_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
             }
 
-            callback("create_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
 
         //private void callback(String methodName, String[] paramTypes, Object[] params) {
 
@@ -109,36 +110,54 @@ public class TwitterNode extends RIONode {
                 System.out.println("No username specified. Unable to login.");
             } else {
             	//TODO how do we handle logins/logouts?
+                rcp_login(parameters);
+                callback("login_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
             }
 
-            callback("login_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
         } else if(operation.equals("logout")) {
         	if(parameters == null) {
                 // no username specified
                 System.out.println("No username specified. Unable to logout.");
             } else {
-                //TODO same problem
+                //TODO how do we handle logins/logouts?
+                rcp_logout(parameters);
+                callback("logout_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
             }
 
-            callback("logout_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
         } else if(operation.equals("post")) {
-        	
-        	callback("post_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            if(parameters == null) {
+                // no tweet message
+                System.out.println("No message specified. Unable to post tweet.");
+            } else {
+                rcp_post(parameters);
+                callback("post_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            }
         } else if(operation.equals("add")) {
-        	
-        	callback("add_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            if(parameters == null) {
+                // no username to follow
+                System.out.println("No username specified. Unable to follow user.");
+            } else {
+                rcp_add(parameters);
+                callback("add_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            }
         } else if(operation.equals("delete")) {
-        	
-        	callback("delete_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            if(parameters == null) {
+                // no username to unfollow
+                System.out.println("No username specified. Unable to unfollow user.");
+            } else {
+                rcp_delete(parameters);
+                callback("delete_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            }
         } else if(operation.equals("read")) {
-        	
+            rcp_read();
         	callback("read_callback", new String[0], new Object[0]);
         } else {
-        	System.out.println("Unknown operation: "+operation);
+        	System.out.println("Unknown operation: " + operation);
         }
     }
 
     private void rpc_call(int node, int p,String msg){
+        System.out.println("rcp_call sending message: " + seq_num + " " + msg);
         RIOSend(node, p, Utility.stringToByteArray(seq_num + " " + msg));
         acked.put(seq_num, false);
         outstanding_ack.add(seq_num);
@@ -147,27 +166,54 @@ public class TwitterNode extends RIONode {
 
     private void callback(String methodName, String[] paramTypes, Object[] params) {
         try {
-            System.out.println(params);
             Callback cb = new Callback(Callback.getMethod(methodName, this, paramTypes),
                     this, params);
-            addTimeout(cb, 10);
+            addTimeout(cb, 3);
         } catch (NoSuchMethodException e) {
             e.printStackTrace();
         } catch (ClassNotFoundException e) {
             e.printStackTrace();
         }
     }
-    
-    private boolean allAcked() {
-    	boolean all_acked = true;
-        for(Integer i : outstanding_ack) {
-            if(!acked.get(i)){
-                all_acked = false;
-            }
-        }
-        return all_acked;
+
+    private void rcp_create(String parameters){
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-tweets");
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-following");
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-info");
     }
-    
+
+    private void rcp_login(String parameters){
+        //TODO call rpc_call() method
+        //Send RPC call to get current seq number for account?
+        //need to figure out how to handle login/logout
+    }
+
+    private void rcp_logout(String parameters){
+        //TODO call rpc_call() method
+        //Send RPC call to server to log user out
+    }
+
+    private void rcp_post(String parameters){
+        //TODO call rpc_call() method
+        //When we send a post to the server, how does it know which account is posting?
+        //Maybe include username in post request
+        rpc_call(0, Protocol.RIOTEST_PKT, "append " + parameters);
+    }
+
+    private void rcp_add(String parameters){
+        //TODO call rpc_call() method
+    }
+
+    private void rcp_delete(String parameters){
+        //TODO call rpc_call() method
+
+    }
+
+    private void rcp_read(){
+        //TODO call rpc_call() method
+
+    }
+
     public void login_callback(String parameters) {
     	//TODO test
     	System.out.println("login_callback called: " + parameters);
@@ -272,17 +318,24 @@ public class TwitterNode extends RIONode {
                 System.out.println("response: " + response);
             }
         } else {
-            create_userfiles(parameters);
+            rcp_create(parameters);
             callback("create_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
         }
     }
-    
-    private void create_userfiles(String parameters){
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-tweets");
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-following");
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-info");
-    }
 
+    private boolean allAcked() {
+        boolean all_acked = true;
+        for(Integer i : outstanding_ack) {
+            if(!acked.get(i)){
+                all_acked = false;
+            }
+        }
+        //debug
+        if(all_acked){
+            System.out.println("ALL MESSAGES ACKED!");
+        }
+        return all_acked;
+    }
 
     @Override
     public String packetBytesToString(byte[] bytes) {
