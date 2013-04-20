@@ -1,58 +1,112 @@
-import edu.washington.cs.cse490h.lib.Callback;
-import edu.washington.cs.cse490h.lib.Utility;
+import edu.washington.cs.cse490h.lib.*;
 
+import java.io.File;
+import java.io.IOException;
 import java.io.PrintStream;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 public class TwitterNode extends RIONode {
 
-    private boolean failed = false;
+    public static double getFailureRate() { return 2/100.0; }
+    public static double getRecoveryRate() { return 2/100.0; }
+    public static double getDropRate() { return 2/100.0; }
+    public static double getDelayRate() { return 0/100.0; }
 
-    private Map<Integer, Boolean> acked;
+    private static boolean failed;
+
+    private Map<Long, Boolean> acked;
     private Integer from;
     private int protocol;
     private byte[] msg;
 
-    private int seq_num;
-    private Set<Integer>  outstanding_ack;
+    private long seq_num;
+    //private Set<Long>  outstanding_ack;
 
     @Override
     public void onRIOReceive(Integer from, int protocol, byte[] msg) {
         //msg from server
         if(from == 0) {
             //Client
-            System.out.println("message received by client: " + packetBytesToString(msg));
+            String response =  packetBytesToString(msg);
+            System.out.println("message received by client: " + response);
+
+            String results = "";
+            long response_seq_num = Long.parseLong(response.split("\\s")[0]);
+            seq_num = Long.parseLong(response.split("\\s")[1]);
+
+            try {
+                results = response.substring(response.split("\\s")[0].length() + 1);
+            }catch(Exception e){
+                //no results
+            }
+
+            System.out.println("server response: " + results);
+
             this.from = from;
             this.protocol = protocol;
             this.msg = msg;
-            acked.put(seq_num, true);
+            acked.put(response_seq_num, true);
         }
         //msg from client
         if(from == 1){
             //Server
             String message = packetBytesToString(msg);
             System.out.println("message received by server: " + message);
+            String request_seq_num = message.split("\\s")[0];
             String command = message.split("\\s")[1];
-            String response = "";
+            String filename =  message.split("\\s")[2];
+            String response = request_seq_num + " " + seq_num + " ";
+            PersistentStorageWriter writer = null;
+            PersistentStorageReader reader = null;
             if(command.equals("create")) {
-                response = "success";
-                //TODO create files
-                //check that username is not taken, else return failure
+              //  boolean file_exists = Utility.fileExists(this, filename);
+                boolean  file_exists = false; //TODO currently overwrites existing files
+                if(file_exists){
+                    //fail
+                    response += "username_taken";
+                }else{
+                    response += "okay";
+                    try{
+                        boolean append = false;
+                        writer = super.getWriter(filename, append);
+                        writer.write("");
+                    }catch(Exception e){
+
+                    }
+                }
             }else if(command.equals("append")) {
                 //TODO impliment method
-                response = "todo";
+                response += "todo";
             }else if(command.equals("read")) {
-                //TODO impliment method
-                response = "todo";
+                try{
+                    reader = super.getReader(filename);
+                    response += reader.readLine();
+                }catch(Exception e){
+
+                }
+
             }else if(command.equals("delete")){
                 //TODO impliment method
-                response = "todo";
+                response += "todo";
             }else{
-                response = "unknown command: " + command;
+                response += "unknown command: " + command;
             }
+            if(reader != null){
+                try{
+                    reader.close();
+                }catch(Exception e){
+
+                }
+
+                if(writer != null){
+                    try{
+                        writer.close();
+                    }catch(Exception e){
+
+                    }
+                }
+            }
+            System.out.println("Server sending response: " + request_seq_num);
             RIOSend(1, Protocol.RIOTEST_PKT, response.getBytes());
         }
     }
@@ -64,9 +118,9 @@ public class TwitterNode extends RIONode {
         // Generate a user-level synoptic event to indicate that the node started.
         logSynopticEvent("started");
 
-        outstanding_ack = new HashSet<Integer>();
-        acked = new HashMap<Integer, Boolean>();
-        seq_num = -1;
+        //outstanding_ack = new HashSet<Long>();
+        acked = new HashMap<Long, Boolean>();
+        seq_num = System.currentTimeMillis();
     }
 
     @Override
@@ -77,7 +131,7 @@ public class TwitterNode extends RIONode {
         try {
             parameters = command.substring(operation.length() + 1);
         }catch(Exception e){
-            //no filename
+            //no parameters
         }
 
         /*
@@ -91,27 +145,25 @@ public class TwitterNode extends RIONode {
 
         //Server = 0
         //Client = 1
+
+        Set<Long> outstandingAcks = null;
         
         if (operation.equals("create")) {
             if(parameters == null) {
                 // no username specified
                 System.out.println("No username specified. Unable to create account.");
             } else {
-                rcp_create(parameters);
-                callback("create_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+                outstandingAcks = rcp_create(parameters, seq_num);
+                callback("create_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
-
-
-        //private void callback(String methodName, String[] paramTypes, Object[] params) {
-
         } else if(operation.equals("login")) {
         	if(parameters == null) {
                 // no username specified
                 System.out.println("No username specified. Unable to login.");
             } else {
             	//TODO how do we handle logins/logouts?
-                rcp_login(parameters);
-                callback("login_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+                outstandingAcks = rcp_login(parameters, seq_num);
+                callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
 
         } else if(operation.equals("logout")) {
@@ -120,8 +172,8 @@ public class TwitterNode extends RIONode {
                 System.out.println("No username specified. Unable to logout.");
             } else {
                 //TODO how do we handle logins/logouts?
-                rcp_logout(parameters);
-                callback("logout_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+                outstandingAcks = rcp_logout(parameters, seq_num);
+                callback("logout_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
 
         } else if(operation.equals("post")) {
@@ -129,46 +181,53 @@ public class TwitterNode extends RIONode {
                 // no tweet message
                 System.out.println("No message specified. Unable to post tweet.");
             } else {
-                rcp_post(parameters);
-                callback("post_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+                outstandingAcks = rcp_post(parameters, seq_num);
+                callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
         } else if(operation.equals("add")) {
             if(parameters == null) {
                 // no username to follow
                 System.out.println("No username specified. Unable to follow user.");
             } else {
-                rcp_add(parameters);
-                callback("add_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+                outstandingAcks = rcp_add(parameters, seq_num);
+                callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
         } else if(operation.equals("delete")) {
             if(parameters == null) {
                 // no username to unfollow
                 System.out.println("No username specified. Unable to unfollow user.");
             } else {
-                rcp_delete(parameters);
-                callback("delete_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+                outstandingAcks = rcp_delete(parameters, seq_num);
+                callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
         } else if(operation.equals("read")) {
-            rcp_read();
-        	callback("read_callback", new String[0], new Object[0]);
+            if(parameters == null) {
+                // no username to unfollow
+                System.out.println("No username specified. Unable to unfollow user.");
+            } else {
+                outstandingAcks = rcp_read(parameters, seq_num);
+                callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+            }
+
         } else {
         	System.out.println("Unknown operation: " + operation);
         }
+        for(Long val : outstandingAcks){
+            seq_num = Math.max(seq_num, val);
+        }
+        seq_num++;
     }
 
-    private void rpc_call(int node, int p,String msg){
+    private void rpc_call(int node, int p,String msg, long seq_num){
         System.out.println("rcp_call sending message: " + seq_num + " " + msg);
         RIOSend(node, p, Utility.stringToByteArray(seq_num + " " + msg));
-        acked.put(seq_num, false);
-        outstanding_ack.add(seq_num);
-        seq_num++;
     }
 
     private void callback(String methodName, String[] paramTypes, Object[] params) {
         try {
             Callback cb = new Callback(Callback.getMethod(methodName, this, paramTypes),
                     this, params);
-            addTimeout(cb, 3);
+            addTimeout(cb, 10);
         } catch (NoSuchMethodException e) {
             e.printStackTrace();
         } catch (ClassNotFoundException e) {
@@ -176,156 +235,190 @@ public class TwitterNode extends RIONode {
         }
     }
 
-    private void rcp_create(String parameters){
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-tweets");
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-following");
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-info");
+    private Set<Long> rcp_create(String parameters, long seq_num){
+
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-tweets", seq_num);
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-following", seq_num + 1);
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-info", seq_num + 2);
+        Set<Long> returned = new TreeSet<Long>();
+        returned.add(seq_num);
+        returned.add(seq_num + 1);
+        returned.add(seq_num + 2);
+        return returned;
     }
 
-    private void rcp_login(String parameters){
+    private Set<Long> rcp_login(String parameters, long seq_num){
         //TODO call rpc_call() method
-        //Send RPC call to get current seq number for account?
-        //need to figure out how to handle login/logout
+        Set<Long> returned = new TreeSet<Long>();
+        rpc_call(0, Protocol.RIOTEST_PKT, "read " + parameters + "-info", seq_num);
+        acked.put(seq_num, false);
+        returned.add(seq_num);
+        return returned;
     }
 
-    private void rcp_logout(String parameters){
+    private Set<Long> rcp_logout(String parameters, long seq_num){
         //TODO call rpc_call() method
         //Send RPC call to server to log user out
+        Set<Long> returned = new TreeSet<Long>();
+        return returned;
     }
 
-    private void rcp_post(String parameters){
+    private Set<Long> rcp_post(String parameters, long seq_num){
         //TODO call rpc_call() method
         //When we send a post to the server, how does it know which account is posting?
         //Maybe include username in post request
-        rpc_call(0, Protocol.RIOTEST_PKT, "append " + parameters);
+        Set<Long> returned = new TreeSet<Long>();
+        rpc_call(0, Protocol.RIOTEST_PKT, "append " + parameters, seq_num);
+        return returned;
     }
 
-    private void rcp_add(String parameters){
+    private Set<Long> rcp_add(String parameters, long seq_num){
         //TODO call rpc_call() method
+        Set<Long> returned = new TreeSet<Long>();
+        return returned;
     }
 
-    private void rcp_delete(String parameters){
+    private Set<Long> rcp_delete(String parameters, long seq_num){
         //TODO call rpc_call() method
+        Set<Long> returned = new TreeSet<Long>();
+        return returned;
 
     }
 
-    private void rcp_read(){
+    private Set<Long> rcp_read(String parameters, long seq_num){
         //TODO call rpc_call() method
+        Set<Long> returned = new TreeSet<Long>();
+        return returned;
 
     }
 
-    public void login_callback(String parameters) {
+    public void login_callback(String parameters, Set<Long> outstandingAcks) {
     	//TODO test
     	System.out.println("login_callback called: " + parameters);
-        boolean all_acked = allAcked();
-        outstanding_ack.clear();
-        acked.clear();
+        boolean all_acked = allAcked(outstandingAcks);
+
         if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
             String response = packetBytesToString(this.msg);
             //TODO stuff
         } else {
         	// retry
-            callback("login_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
     
-    public void logout_callback(String parameters) {
+    public void logout_callback(String parameters, Set<Long> outstandingAcks) {
     	//TODO test
     	System.out.println("logout_callback called: " + parameters);
-        boolean all_acked = allAcked();
-        outstanding_ack.clear();
-        acked.clear();
+        boolean all_acked = allAcked(outstandingAcks);
         if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
             String response = packetBytesToString(this.msg);
             //TODO stuffhere
         } else {
             //TODO retry
-            callback("logout_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            callback("logout_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
     
-    public void delete_callback(String parameters) {
+    public void delete_callback(String parameters, Set<Long> outstandingAcks) {
     	//TODO test
     	System.out.println("delete_callback called: " + parameters);
-        boolean all_acked = allAcked();
-        outstanding_ack.clear();
-        acked.clear();
+        boolean all_acked = allAcked(outstandingAcks);
+
         if(all_acked) {
+            acked.clear();
             String response = packetBytesToString(this.msg);
             //TODO stuff
         } else {
         	// retry
-            callback("delete_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
     
-    public void post_callback(String parameters) {
+    public void post_callback(String parameters, Set<Long> outstandingAcks) {
     	//TODO test
     	System.out.println("post_callback called: " + parameters);
-        boolean all_acked = allAcked();
-        outstanding_ack.clear();
-        acked.clear();
+        boolean all_acked = allAcked(outstandingAcks);
+
         if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
             String response = packetBytesToString(this.msg);
             //TODO stuff
         } else {
         	// retry
-            callback("post_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
     
-    public void add_callback(String parameters) {
+    public void add_callback(String parameters, Set<Long> outstandingAcks) {
     	//TODO test
     	System.out.println("login_callback called: " + parameters);
-        boolean all_acked = allAcked();
-        outstanding_ack.clear();
-        acked.clear();
+        boolean all_acked = allAcked(outstandingAcks);
+
         if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
             String response = packetBytesToString(this.msg);
             //TODO stuff
         } else {
         	// retry
-            callback("add_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
     
-    public void read_callback() {
+    public void read_callback(String parameters, Set<Long> outstandingAcks) {
     	//TODO test
     	System.out.println("read_callback called");
-        boolean all_acked = allAcked();
-        outstanding_ack.clear();
-        acked.clear();
+        boolean all_acked = allAcked(outstandingAcks);
+
         if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
             String response = packetBytesToString(this.msg);
             //TODO stuff
         } else {
         	// retry
-            callback("read_callback", new String[0], new Object[0]);
+            callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
 
-    public void create_callback(String parameters) {
+    public void create_callback(String parameters, Set<Long> outstandingAcks) {
         System.out.println("create_callback called: " + parameters);
-        boolean all_acked = allAcked();
-        outstanding_ack.clear();
-        acked.clear();
+        boolean all_acked = allAcked(outstandingAcks);
+
         if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
             String response = packetBytesToString(this.msg);
-            if(response.equals("username_taken")){
+            if(response.equals("username_taken")){   //TODO: fix or remove
                 System.out.println("Username: " + parameters + "taken. Try again.");
             } else {
                 System.out.println("Account created!");
                 System.out.println("response: " + response);
             }
         } else {
-            rcp_create(parameters);
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
+            rcp_create(parameters, min_ack);
             callback("create_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
         }
     }
 
-    private boolean allAcked() {
+    private boolean allAcked(Set<Long> outstandingAcks) {
         boolean all_acked = true;
-        for(Integer i : outstanding_ack) {
+        for(Long i : outstandingAcks) {
             if(!acked.get(i)){
                 all_acked = false;
             }
