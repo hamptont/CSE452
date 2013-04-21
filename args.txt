@@ -1,0 +1,2 @@
+ -n TwitterNode -f 0 -c scripts/proj1
+ 

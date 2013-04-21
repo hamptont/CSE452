@@ -1,15 +1,13 @@
 import edu.washington.cs.cse490h.lib.*;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintStream;
+import java.io.*;
 import java.util.*;
 
 public class TwitterNode extends RIONode {
 
-    public static double getFailureRate() { return 2/100.0; }
-    public static double getRecoveryRate() { return 2/100.0; }
-    public static double getDropRate() { return 2/100.0; }
+    public static double getFailureRate() { return 0/100.0; }
+    public static double getRecoveryRate() { return 0/100.0; }
+    public static double getDropRate() { return 0/100.0; }
     public static double getDelayRate() { return 0/100.0; }
 
     private static boolean failed;
@@ -22,6 +20,12 @@ public class TwitterNode extends RIONode {
     private long seq_num;
     //private Set<Long>  outstanding_ack;
 
+    private String username;
+
+    private static final String TWEET_FILE_SUFFIX = "-tweets";
+    private static final String FOLLOWERS_FILE_SUFFIX = "-following";
+    private static final String INFO_FILE_SUFFIX = "-info";
+
     @Override
     public void onRIOReceive(Integer from, int protocol, byte[] msg) {
         //msg from server
@@ -32,7 +36,7 @@ public class TwitterNode extends RIONode {
 
             String results = "";
             long response_seq_num = Long.parseLong(response.split("\\s")[0]);
-            seq_num = Long.parseLong(response.split("\\s")[1]);
+            seq_num = Math.max(Long.parseLong(response.split("\\s")[1]), seq_num);
 
             try {
                 results = response.substring(response.split("\\s")[0].length() + 1);
@@ -55,9 +59,12 @@ public class TwitterNode extends RIONode {
             String request_seq_num = message.split("\\s")[0];
             String command = message.split("\\s")[1];
             String filename =  message.split("\\s")[2];
+
             String response = request_seq_num + " " + seq_num + " ";
             PersistentStorageWriter writer = null;
             PersistentStorageReader reader = null;
+            PersistentStorageOutputStream byte_writer= null;
+            PersistentStorageInputStream byte_reader = null;
             if(command.equals("create")) {
               //  boolean file_exists = Utility.fileExists(this, filename);
                 boolean  file_exists = false; //TODO currently overwrites existing files
@@ -70,13 +77,49 @@ public class TwitterNode extends RIONode {
                         boolean append = false;
                         writer = super.getWriter(filename, append);
                         writer.write("");
+
+                        byte_writer = super.getOutputStream(filename, append);
+                        ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+                        TreeMap<String, String> fileMap = new TreeMap<String, String>();
+                        out.writeObject(fileMap);
+                        out.close();
+
                     }catch(Exception e){
 
                     }
                 }
             }else if(command.equals("append")) {
-                //TODO impliment method
-                response += "todo";
+                try{
+                    boolean append = false;
+                    byte_reader = super.getInputStream(filename);
+
+                    ObjectInputStream in = new ObjectInputStream(byte_reader);
+
+                    TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
+
+                    in.close();
+
+                    if(!fileMap.containsKey(request_seq_num)){
+                        //duplicate request
+                        byte_writer = super.getOutputStream(filename, append);
+
+                        ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+                        String tweet = message.substring(request_seq_num.length() + command.length() + filename.length() + 3);
+                        fileMap.put(request_seq_num, tweet);
+                        out.writeObject(fileMap);
+                        out.close();
+                    } else {
+                        System.out.println("Tweet not posted, key already exists: " + request_seq_num);
+                    }
+
+                    System.out.println("POSTS: ");
+                    System.out.println(fileMap.values());
+                }catch(Exception e){
+                    System.out.println();
+                    e.printStackTrace();
+                }
+
+                response += "okay";
             }else if(command.equals("read")) {
                 try{
                     reader = super.getReader(filename);
@@ -97,18 +140,47 @@ public class TwitterNode extends RIONode {
                 }catch(Exception e){
 
                 }
+            }
+            if(writer != null){
+                try{
+                    writer.close();
+                }catch(Exception e){
 
-                if(writer != null){
-                    try{
-                        writer.close();
-                    }catch(Exception e){
-
-                    }
                 }
             }
+            if(byte_reader != null){
+                try{
+                    byte_reader.close();
+                }catch(Exception e){
+
+                }
+            }
+            if(byte_writer != null){
+                try{
+                    byte_writer.close();
+                }catch(Exception e){
+
+                }
+            }
+
             System.out.println("Server sending response: " + request_seq_num);
             RIOSend(1, Protocol.RIOTEST_PKT, response.getBytes());
         }
+    }
+
+    private byte[] read_file(PersistentStorageInputStream byte_reader){
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try{
+            byte[] next_bytes = new byte[1024];
+            int bytesRead = 0;
+            while(bytesRead > 0){
+                bytesRead = byte_reader.read(next_bytes);
+                bytes.write(next_bytes, 0, bytesRead);
+            }
+        }catch(IOException e){
+
+        }
+        return bytes.toByteArray();
     }
 
     @Override
@@ -161,7 +233,7 @@ public class TwitterNode extends RIONode {
                 // no username specified
                 System.out.println("No username specified. Unable to login.");
             } else {
-            	//TODO how do we handle logins/logouts?
+                username = parameters;
                 outstandingAcks = rcp_login(parameters, seq_num);
                 callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
@@ -171,15 +243,17 @@ public class TwitterNode extends RIONode {
                 // no username specified
                 System.out.println("No username specified. Unable to logout.");
             } else {
-                //TODO how do we handle logins/logouts?
-                outstandingAcks = rcp_logout(parameters, seq_num);
-                callback("logout_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+                username = null;
+            //    outstandingAcks = rcp_logout(parameters, seq_num);
+            //    callback("logout_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
 
         } else if(operation.equals("post")) {
             if(parameters == null) {
                 // no tweet message
                 System.out.println("No message specified. Unable to post tweet.");
+            } else if (username == null){
+                System.out.println("You are not logged in. Please log in to post messages.");
             } else {
                 outstandingAcks = rcp_post(parameters, seq_num);
                 callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
@@ -237,9 +311,9 @@ public class TwitterNode extends RIONode {
 
     private Set<Long> rcp_create(String parameters, long seq_num){
 
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-tweets", seq_num);
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-following", seq_num + 1);
-        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + "-info", seq_num + 2);
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + TWEET_FILE_SUFFIX, seq_num);
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + FOLLOWERS_FILE_SUFFIX, seq_num + 1);
+        rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + INFO_FILE_SUFFIX, seq_num + 2);
         Set<Long> returned = new TreeSet<Long>();
         returned.add(seq_num);
         returned.add(seq_num + 1);
@@ -248,9 +322,9 @@ public class TwitterNode extends RIONode {
     }
 
     private Set<Long> rcp_login(String parameters, long seq_num){
-        //TODO call rpc_call() method
+
         Set<Long> returned = new TreeSet<Long>();
-        rpc_call(0, Protocol.RIOTEST_PKT, "read " + parameters + "-info", seq_num);
+        rpc_call(0, Protocol.RIOTEST_PKT, "read " + parameters + INFO_FILE_SUFFIX, seq_num);
         acked.put(seq_num, false);
         returned.add(seq_num);
         return returned;
@@ -264,11 +338,8 @@ public class TwitterNode extends RIONode {
     }
 
     private Set<Long> rcp_post(String parameters, long seq_num){
-        //TODO call rpc_call() method
-        //When we send a post to the server, how does it know which account is posting?
-        //Maybe include username in post request
         Set<Long> returned = new TreeSet<Long>();
-        rpc_call(0, Protocol.RIOTEST_PKT, "append " + parameters, seq_num);
+        rpc_call(0, Protocol.RIOTEST_PKT, "append " + username + TWEET_FILE_SUFFIX + " " + parameters, seq_num);
         return returned;
     }
 
