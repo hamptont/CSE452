@@ -92,33 +92,29 @@ public class TwitterNode extends RIONode {
                 try{
                     boolean append = false;
                     byte_reader = super.getInputStream(filename);
-
                     ObjectInputStream in = new ObjectInputStream(byte_reader);
-
                     TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
-
                     in.close();
 
                     if(!fileMap.containsKey(request_seq_num)){
                         //duplicate request
                         byte_writer = super.getOutputStream(filename, append);
-
                         ObjectOutputStream out = new ObjectOutputStream(byte_writer);
                         String tweet = message.substring(request_seq_num.length() + command.length() + filename.length() + 3);
                         fileMap.put(request_seq_num, tweet);
                         out.writeObject(fileMap);
                         out.close();
                     } else {
-                        System.out.println("Tweet not posted, key already exists: " + request_seq_num);
+                        System.out.println("Append not processed, timestamp already exists: " + message);
                     }
 
-                    System.out.println("POSTS: ");
+                    //debug
+                    System.out.println("MAP VALUES (append): ");
                     System.out.println(fileMap.values());
                 }catch(Exception e){
                     System.out.println();
                     e.printStackTrace();
                 }
-
                 response += "okay";
             }else if(command.equals("read")) {
                 try{
@@ -129,8 +125,48 @@ public class TwitterNode extends RIONode {
                 }
 
             }else if(command.equals("delete")){
-                //TODO impliment method
-                response += "todo";
+                //Removing followers from "-followers" file
+                //If user is not currently being followed -- does nothing
+                //If user is being followed multiple times -- removes all ocurences
+                try{
+                    //read in treemap from file
+                    boolean append = false;
+                    byte_reader = super.getInputStream(filename);
+                    ObjectInputStream in = new ObjectInputStream(byte_reader);
+                    TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
+                    in.close();
+
+                    String unfollow_username = message.substring(request_seq_num.length() + command.length() + filename.length() + 3);
+                    if(fileMap.values().contains(unfollow_username)){
+                        //remove user
+                        Set<String> keysToRemove = new HashSet<String>();
+                        for (Map.Entry<String,String> entry : fileMap.entrySet()) {
+                            String key = entry.getKey();
+                            String value = entry.getValue();
+                            if(value.equals(unfollow_username)){
+                                keysToRemove.add(key);
+                            }
+                        }
+
+                        //Can't modify map while iterating -- make modifications after
+                        for(String key : keysToRemove){
+                            fileMap.remove(key);
+                        }
+
+                        //only need to write if we made modifications
+                        byte_writer = super.getOutputStream(filename, append);
+                        ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+                        out.writeObject(fileMap);
+                        out.close();
+                    }
+
+                    //debug
+                    System.out.println("MAP VALUES (remove): ");
+                    System.out.println(fileMap.values());
+                }catch(Exception e){
+                    e.printStackTrace();
+                }
+                response += "okay";
             }else{
                 response += "unknown command: " + command;
             }
@@ -263,6 +299,7 @@ public class TwitterNode extends RIONode {
                 // no username to follow
                 System.out.println("No username specified. Unable to follow user.");
             } else {
+                //TODO: does not check if user exists, and allows uses to follow same user multiple times
                 outstandingAcks = rcp_add(parameters, seq_num);
                 callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
@@ -286,9 +323,11 @@ public class TwitterNode extends RIONode {
         } else {
         	System.out.println("Unknown operation: " + operation);
         }
+        //Find the max of the outstanding acks sent
         for(Long val : outstandingAcks){
             seq_num = Math.max(seq_num, val);
         }
+        //Next unused sequence number
         seq_num++;
     }
 
@@ -310,7 +349,6 @@ public class TwitterNode extends RIONode {
     }
 
     private Set<Long> rcp_create(String parameters, long seq_num){
-
         rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + TWEET_FILE_SUFFIX, seq_num);
         rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + FOLLOWERS_FILE_SUFFIX, seq_num + 1);
         rpc_call(0, Protocol.RIOTEST_PKT, "create " + parameters + INFO_FILE_SUFFIX, seq_num + 2);
@@ -322,7 +360,6 @@ public class TwitterNode extends RIONode {
     }
 
     private Set<Long> rcp_login(String parameters, long seq_num){
-
         Set<Long> returned = new TreeSet<Long>();
         rpc_call(0, Protocol.RIOTEST_PKT, "read " + parameters + INFO_FILE_SUFFIX, seq_num);
         acked.put(seq_num, false);
@@ -340,27 +377,31 @@ public class TwitterNode extends RIONode {
     private Set<Long> rcp_post(String parameters, long seq_num){
         Set<Long> returned = new TreeSet<Long>();
         rpc_call(0, Protocol.RIOTEST_PKT, "append " + username + TWEET_FILE_SUFFIX + " " + parameters, seq_num);
+        acked.put(seq_num, false);
+        returned.add(seq_num);
         return returned;
     }
 
     private Set<Long> rcp_add(String parameters, long seq_num){
-        //TODO call rpc_call() method
         Set<Long> returned = new TreeSet<Long>();
+        rpc_call(0, Protocol.RIOTEST_PKT, "append " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
+        acked.put(seq_num, false);
+        returned.add(seq_num);
         return returned;
     }
 
     private Set<Long> rcp_delete(String parameters, long seq_num){
-        //TODO call rpc_call() method
         Set<Long> returned = new TreeSet<Long>();
+        rpc_call(0, Protocol.RIOTEST_PKT, "delete " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
+        acked.put(seq_num, false);
+        returned.add(seq_num);
         return returned;
-
     }
 
     private Set<Long> rcp_read(String parameters, long seq_num){
         //TODO call rpc_call() method
         Set<Long> returned = new TreeSet<Long>();
         return returned;
-
     }
 
     public void login_callback(String parameters, Set<Long> outstandingAcks) {
@@ -402,8 +443,9 @@ public class TwitterNode extends RIONode {
         boolean all_acked = allAcked(outstandingAcks);
 
         if(all_acked) {
-            acked.clear();
-            String response = packetBytesToString(this.msg);
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }            String response = packetBytesToString(this.msg);
             //TODO stuff
         } else {
         	// retry
