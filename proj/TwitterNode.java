@@ -18,9 +18,9 @@ public class TwitterNode extends RIONode {
     private byte[] msg;
 
     private long seq_num;
-    //private Set<Long>  outstanding_ack;
 
     private String username;
+    private Map<String, String> tweets;
 
     private static final String TWEET_FILE_SUFFIX = "-tweets";
     private static final String FOLLOWERS_FILE_SUFFIX = "-following";
@@ -39,13 +39,51 @@ public class TwitterNode extends RIONode {
             seq_num = Math.max(Long.parseLong(response.split("\\s")[1]), seq_num);
 
             try {
-                results = response.substring(response.split("\\s")[0].length() + 1);
+                results = response.substring(response.split("\\s")[0].length() + response.split("\\s")[1].length() + 2);
             }catch(Exception e){
                 //no results
             }
 
             System.out.println("server response: " + results);
+            String command = results.split("\\s")[0];
+            //check to see if more RCP calls need to be sent
+            if(command.equals("read")){
+                //read response
+                //check if it is a read of a '-following' file or '-tweets'
+                String filename = results.split("\\s")[1];
 
+                if(filename.endsWith("-following")){
+                    //Send more RCP calls to fetch the tweets
+                    System.out.println(".......");
+                    Set<String> usernames = new HashSet<String>();
+                    for(int i = 2; i < results.split("\\s").length; i++){
+                        String username = results.split("\\s")[i];
+                        usernames.add(username);
+                    }
+                    Set<Long> outstandingAcks = rcp_read_multiple(usernames, seq_num);
+
+                //   String parameters = filename;
+                    callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{usernames, outstandingAcks});
+
+
+                    updateSeqNum(outstandingAcks);
+                }else if(filename.endsWith("-tweets")){
+                    //Return tweets to user
+                    System.out.println("....." + results);
+                    String all_tweets = results.substring(results.split("\\s")[0].length() + results.split("\\s")[1].length() + 2);
+                    System.out.println("tweets: " + all_tweets);
+                    for(int i = 0; i < all_tweets.split("\\n").length; i++){
+                        String tweet = all_tweets.split("\\n")[i];
+                        if(tweet.length() > 0){
+                            System.out.println("test: " + tweet.split("\\s")[0]);
+                            long id = Long.parseLong(tweet.split("\\s")[0]);
+                            String tweet_content = tweet.substring(tweet.split("\\s")[0].length() + 1);
+                            tweets.put("" + id, tweet_content);
+                        }
+                    }
+                    System.out.println("done");
+                }
+            }
             this.from = from;
             this.protocol = protocol;
             this.msg = msg;
@@ -118,12 +156,25 @@ public class TwitterNode extends RIONode {
                 response += "okay";
             }else if(command.equals("read")) {
                 try{
-                    reader = super.getReader(filename);
-                    response += reader.readLine();
+                    response += "read " + filename + " ";
+                    boolean append = false;
+                    byte_reader = super.getInputStream(filename);
+                    ObjectInputStream in = new ObjectInputStream(byte_reader);
+                    TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
+                    in.close();
+
+                //    String username = filename.split("-")[0];
+                    for(String s : fileMap.keySet()){
+                        //return values -- username of people you are following
+                   //     response += s + " " + username + " " + fileMap.get(s) + "\n";
+                        //TODO: return username with tweet!!!!!
+
+                        response += s + " " + fileMap.get(s) + "\n";
+                    }
+                    response = response.trim();
                 }catch(Exception e){
 
                 }
-
             }else if(command.equals("delete")){
                 //Removing followers from "-followers" file
                 //If user is not currently being followed -- does nothing
@@ -204,6 +255,15 @@ public class TwitterNode extends RIONode {
         }
     }
 
+    private void updateSeqNum(Set<Long> outstandingAcks){
+        //Find the max of the outstanding acks sent
+        for(Long val : outstandingAcks){
+            seq_num = Math.max(seq_num, val);
+        }
+        //Next unused sequence number
+        seq_num++;
+    }
+
     private byte[] read_file(PersistentStorageInputStream byte_reader){
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try{
@@ -229,6 +289,7 @@ public class TwitterNode extends RIONode {
         //outstanding_ack = new HashSet<Long>();
         acked = new HashMap<Long, Boolean>();
         seq_num = System.currentTimeMillis();
+        tweets = new HashMap<String, String>();
     }
 
     @Override
@@ -254,7 +315,7 @@ public class TwitterNode extends RIONode {
         //Server = 0
         //Client = 1
 
-        Set<Long> outstandingAcks = null;
+        Set<Long> outstandingAcks = new TreeSet<Long>();
         
         if (operation.equals("create")) {
             if(parameters == null) {
@@ -273,17 +334,13 @@ public class TwitterNode extends RIONode {
                 outstandingAcks = rcp_login(parameters, seq_num);
                 callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
-
         } else if(operation.equals("logout")) {
         	if(parameters == null) {
                 // no username specified
                 System.out.println("No username specified. Unable to logout.");
             } else {
                 username = null;
-            //    outstandingAcks = rcp_logout(parameters, seq_num);
-            //    callback("logout_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
-
         } else if(operation.equals("post")) {
             if(parameters == null) {
                 // no tweet message
@@ -312,23 +369,16 @@ public class TwitterNode extends RIONode {
                 callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
         } else if(operation.equals("read")) {
-            if(parameters == null) {
-                // no username to unfollow
-                System.out.println("No username specified. Unable to unfollow user.");
+            if(parameters != null) {
+                System.out.println("No parameters should be provided for the read command.");
             } else {
                 outstandingAcks = rcp_read(parameters, seq_num);
                 callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
             }
-
         } else {
         	System.out.println("Unknown operation: " + operation);
         }
-        //Find the max of the outstanding acks sent
-        for(Long val : outstandingAcks){
-            seq_num = Math.max(seq_num, val);
-        }
-        //Next unused sequence number
-        seq_num++;
+        updateSeqNum(outstandingAcks);
     }
 
     private void rpc_call(int node, int p,String msg, long seq_num){
@@ -367,12 +417,15 @@ public class TwitterNode extends RIONode {
         return returned;
     }
 
+    /*
+    //Not sending RCP call to server for log out
     private Set<Long> rcp_logout(String parameters, long seq_num){
         //TODO call rpc_call() method
         //Send RPC call to server to log user out
         Set<Long> returned = new TreeSet<Long>();
         return returned;
     }
+    */
 
     private Set<Long> rcp_post(String parameters, long seq_num){
         Set<Long> returned = new TreeSet<Long>();
@@ -399,10 +452,25 @@ public class TwitterNode extends RIONode {
     }
 
     private Set<Long> rcp_read(String parameters, long seq_num){
-        //TODO call rpc_call() method
         Set<Long> returned = new TreeSet<Long>();
+        rpc_call(0, Protocol.RIOTEST_PKT, "read " + username + FOLLOWERS_FILE_SUFFIX, seq_num);
+        acked.put(seq_num, false);
+        returned.add(seq_num);
         return returned;
     }
+
+    //sends multiple RCP read requests to get tweets from all users being followed
+    private Set<Long> rcp_read_multiple(Set<String> usernames, long seq_num){
+        Set<Long> returned = new TreeSet<Long>();
+        int count = 0;
+        for(String username: usernames){
+            rpc_call(0, Protocol.RIOTEST_PKT, "read " + username + TWEET_FILE_SUFFIX, seq_num + count);
+            returned.add(seq_num + count);
+        }
+
+        return returned;
+    }
+
 
     public void login_callback(String parameters, Set<Long> outstandingAcks) {
     	//TODO test
@@ -504,6 +572,28 @@ public class TwitterNode extends RIONode {
         }
     }
 
+    public void read_multiple_callback(Set<String> parameters, Set<Long> outstandingAcks){
+        System.out.println("read_multiple_callback called");
+        boolean all_acked = allAcked(outstandingAcks);
+        if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
+            String response = packetBytesToString(this.msg);
+            for(String val : tweets.keySet()){
+                System.out.println("Tweet: " + val + " : " + tweets.get(val));
+            }
+        } else {
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
+            rcp_read_multiple(parameters, min_ack);
+            callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+        }
+
+    }
+
     public void create_callback(String parameters, Set<Long> outstandingAcks) {
         System.out.println("create_callback called: " + parameters);
         boolean all_acked = allAcked(outstandingAcks);
@@ -525,7 +615,7 @@ public class TwitterNode extends RIONode {
                 min_ack = Math.min(num, min_ack);
             }
             rcp_create(parameters, min_ack);
-            callback("create_callback", new String[]{"java.lang.String"}, new Object[]{parameters});
+            callback("create_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
 
