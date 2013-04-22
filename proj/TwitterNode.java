@@ -54,7 +54,6 @@ public class TwitterNode extends RIONode {
 
                 if(filename.endsWith("-following")){
                     //Send more RCP calls to fetch the tweets
-                    System.out.println(".......");
                     Set<String> usernames = new HashSet<String>();
                     for(int i = 2; i < results.split("\\s").length; i++){
                         String username = results.split("\\s")[i];
@@ -64,24 +63,18 @@ public class TwitterNode extends RIONode {
 
                 //   String parameters = filename;
                     callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{usernames, outstandingAcks});
-
-
                     updateSeqNum(outstandingAcks);
                 }else if(filename.endsWith("-tweets")){
                     //Return tweets to user
-                    System.out.println("....." + results);
                     String all_tweets = results.substring(results.split("\\s")[0].length() + results.split("\\s")[1].length() + 2);
-                    System.out.println("tweets: " + all_tweets);
                     for(int i = 0; i < all_tweets.split("\\n").length; i++){
                         String tweet = all_tweets.split("\\n")[i];
                         if(tweet.length() > 0){
-                            System.out.println("test: " + tweet.split("\\s")[0]);
-                            long id = Long.parseLong(tweet.split("\\s")[0]);
+                            String id = tweet.split("\\s")[0];
                             String tweet_content = tweet.substring(tweet.split("\\s")[0].length() + 1);
-                            tweets.put("" + id, tweet_content);
+                            tweets.put(id, tweet_content);
                         }
                     }
-                    System.out.println("done");
                 }
             }
             this.from = from;
@@ -157,19 +150,18 @@ public class TwitterNode extends RIONode {
             }else if(command.equals("read")) {
                 try{
                     response += "read " + filename + " ";
-                    boolean append = false;
                     byte_reader = super.getInputStream(filename);
                     ObjectInputStream in = new ObjectInputStream(byte_reader);
                     TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
                     in.close();
 
-                //    String username = filename.split("-")[0];
+                    String username = filename.split("-")[0];
                     for(String s : fileMap.keySet()){
                         //return values -- username of people you are following
                    //     response += s + " " + username + " " + fileMap.get(s) + "\n";
                         //TODO: return username with tweet!!!!!
 
-                        response += s + " " + fileMap.get(s) + "\n";
+                        response += s + username + " " + fileMap.get(s) + "\n";
                     }
                     response = response.trim();
                 }catch(Exception e){
@@ -340,6 +332,7 @@ public class TwitterNode extends RIONode {
                 System.out.println("No username specified. Unable to logout.");
             } else {
                 username = null;
+                tweets.clear();
             }
         } else if(operation.equals("post")) {
             if(parameters == null) {
@@ -580,6 +573,7 @@ public class TwitterNode extends RIONode {
                 acked.remove(ack);
             }
             String response = packetBytesToString(this.msg);
+            System.out.println(username + "'s follower's tweets:");
             for(String val : tweets.keySet()){
                 System.out.println("Tweet: " + val + " : " + tweets.get(val));
             }
