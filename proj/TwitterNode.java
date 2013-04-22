@@ -1,3 +1,6 @@
+//Hampton Terry - hterry
+//Jacob Sanders - jacobs22
+
 import edu.washington.cs.cse490h.lib.*;
 
 import java.io.*;
@@ -5,10 +8,10 @@ import java.util.*;
 
 public class TwitterNode extends RIONode {
 
-    public static double getFailureRate() { return 2/100.0; }
-    public static double getRecoveryRate() { return 2/100.0; }
-    public static double getDropRate() { return 2/100.0; }
-    public static double getDelayRate() { return 2/100.0; }
+    public static double getFailureRate() { return 0/100.0; }
+    public static double getRecoveryRate() { return 0/100.0; }
+    public static double getDropRate() { return 0/100.0; }
+    public static double getDelayRate() { return 0/100.0; }
 
     private static boolean failed;
 
@@ -18,6 +21,8 @@ public class TwitterNode extends RIONode {
     private byte[] msg;
 
     private long seq_num;
+    private Queue<String> pending_commands;
+    private int commandInProgress;
 
     private String username;
     private Map<String, String> tweets;
@@ -63,6 +68,7 @@ public class TwitterNode extends RIONode {
 
                 //   String parameters = filename;
                     callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{usernames, outstandingAcks});
+                    commandInProgress++;
                     updateSeqNum(outstandingAcks);
                 }else if(filename.endsWith("-tweets")){
                     //Return tweets to user
@@ -282,10 +288,34 @@ public class TwitterNode extends RIONode {
         acked = new HashMap<Long, Boolean>();
         seq_num = System.currentTimeMillis();
         tweets = new HashMap<String, String>();
+        pending_commands = new LinkedList<String>();
+        commandInProgress = 0;
+
     }
 
+    public void tick_callback(){
+        if(commandInProgress == 0 && !pending_commands.isEmpty()){
+            String command = pending_commands.remove();
+            System.out.println("!!! " + command);
+            onCommand_ordered(command);
+        }
+
+        if(!pending_commands.isEmpty()) {
+            callback("tick_callback", new String[0], new Object[0]);
+        }
+    }
+
+
     @Override
-    public void onCommand(String command) {
+    public void onCommand(String command){
+        if(pending_commands.isEmpty()){
+            callback("tick_callback", new String[0], new Object[0]);
+        }
+        pending_commands.add(command);
+
+    }
+
+    private void onCommand_ordered(String command) {
         String[] split = command.split("\\s");
         String operation = split[0];
         String parameters = null;
@@ -316,15 +346,21 @@ public class TwitterNode extends RIONode {
             } else {
                 outstandingAcks = rcp_create(parameters, seq_num);
                 callback("create_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+                commandInProgress++;
             }
         } else if(operation.equals("login")) {
         	if(parameters == null) {
                 // no username specified
                 System.out.println("No username specified. Unable to login.");
-            } else {
+            } else if(username != null){
+                //someone else already loged in
+                System.out.print("Account " + username + " is currently logged in.");
+                System.out.println("Please log out before you can log in with another account.");
+            }else {
                 username = parameters;
                 outstandingAcks = rcp_login(parameters, seq_num);
                 callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+                commandInProgress++;
             }
         } else if(operation.equals("logout")) {
         	if(parameters == null) {
@@ -343,6 +379,7 @@ public class TwitterNode extends RIONode {
             } else {
                 outstandingAcks = rcp_post(parameters, seq_num);
                 callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+                commandInProgress++;
             }
         } else if(operation.equals("add")) {
             if(parameters == null) {
@@ -352,6 +389,7 @@ public class TwitterNode extends RIONode {
                 //TODO: does not check if user exists, and allows uses to follow same user multiple times
                 outstandingAcks = rcp_add(parameters, seq_num);
                 callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+                commandInProgress++;
             }
         } else if(operation.equals("delete")) {
             if(parameters == null) {
@@ -360,6 +398,7 @@ public class TwitterNode extends RIONode {
             } else {
                 outstandingAcks = rcp_delete(parameters, seq_num);
                 callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+                commandInProgress++;
             }
         } else if(operation.equals("read")) {
             if(parameters != null) {
@@ -367,6 +406,7 @@ public class TwitterNode extends RIONode {
             } else {
                 outstandingAcks = rcp_read(parameters, seq_num);
                 callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+                commandInProgress++;
             }
         } else {
         	System.out.println("Unknown operation: " + operation);
@@ -380,10 +420,14 @@ public class TwitterNode extends RIONode {
     }
 
     private void callback(String methodName, String[] paramTypes, Object[] params) {
+        int timeout = 10;
+        if(methodName.equals("tick_callback")){
+            timeout = 1;
+        }
         try {
             Callback cb = new Callback(Callback.getMethod(methodName, this, paramTypes),
                     this, params);
-            addTimeout(cb, 10);
+            addTimeout(cb, timeout);
         } catch (NoSuchMethodException e) {
             e.printStackTrace();
         } catch (ClassNotFoundException e) {
@@ -475,7 +519,7 @@ public class TwitterNode extends RIONode {
                 acked.remove(ack);
             }
             String response = packetBytesToString(this.msg);
-            //TODO stuff
+            commandInProgress--;
         } else {
         	// retry
             callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
@@ -491,9 +535,8 @@ public class TwitterNode extends RIONode {
                 acked.remove(ack);
             }
             String response = packetBytesToString(this.msg);
-            //TODO stuffhere
+            commandInProgress--;
         } else {
-            //TODO retry
             callback("logout_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
@@ -507,7 +550,7 @@ public class TwitterNode extends RIONode {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
             }            String response = packetBytesToString(this.msg);
-            //TODO stuff
+            commandInProgress--;
         } else {
         	// retry
             callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
@@ -524,7 +567,7 @@ public class TwitterNode extends RIONode {
                 acked.remove(ack);
             }
             String response = packetBytesToString(this.msg);
-            //TODO stuff
+            commandInProgress--;
         } else {
         	// retry
             callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
@@ -541,7 +584,7 @@ public class TwitterNode extends RIONode {
                 acked.remove(ack);
             }
             String response = packetBytesToString(this.msg);
-            //TODO stuff
+            commandInProgress--;
         } else {
         	// retry
             callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
@@ -549,7 +592,6 @@ public class TwitterNode extends RIONode {
     }
     
     public void read_callback(String parameters, Set<Long> outstandingAcks) {
-    	//TODO test
     	System.out.println("read_callback called");
         boolean all_acked = allAcked(outstandingAcks);
 
@@ -558,7 +600,7 @@ public class TwitterNode extends RIONode {
                 acked.remove(ack);
             }
             String response = packetBytesToString(this.msg);
-            //TODO stuff
+            commandInProgress--;
         } else {
         	// retry
             callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
@@ -572,11 +614,11 @@ public class TwitterNode extends RIONode {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
             }
-            String response = packetBytesToString(this.msg);
             System.out.println(username + "'s follower's tweets:");
             for(String val : tweets.keySet()){
                 System.out.println("Tweet: " + val + " : " + tweets.get(val));
             }
+            commandInProgress--;
         } else {
             long min_ack = Long.MAX_VALUE;
             for(Long num : outstandingAcks){
@@ -585,7 +627,6 @@ public class TwitterNode extends RIONode {
             rcp_read_multiple(parameters, min_ack);
             callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
-
     }
 
     public void create_callback(String parameters, Set<Long> outstandingAcks) {
@@ -603,6 +644,7 @@ public class TwitterNode extends RIONode {
                 System.out.println("Account created!");
                 System.out.println("response: " + response);
             }
+            commandInProgress--;
         } else {
             long min_ack = Long.MAX_VALUE;
             for(Long num : outstandingAcks){
