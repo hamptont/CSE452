@@ -5,10 +5,10 @@ import java.util.*;
 
 public class TwitterNode extends RIONode {
 
-    public static double getFailureRate() { return 0/100.0; }
-    public static double getRecoveryRate() { return 0/100.0; }
-    public static double getDropRate() { return 0/100.0; }
-    public static double getDelayRate() { return 0/100.0; }
+    public static double getFailureRate() { return 2/100.0; }
+    public static double getRecoveryRate() { return 2/100.0; }
+    public static double getDropRate() { return 2/100.0; }
+    public static double getDelayRate() { return 2/100.0; }
 
     private static boolean failed;
 
