@@ -16,8 +16,8 @@ public class TwitterNode extends RIONode {
 	private static boolean failed;
 
 	private Map<Long, Boolean> acked;
-	private Integer from;
-	private int protocol;
+	//private Integer from;
+	//private int protocol;
 	private byte[] msg;
 
 	private long seq_num;
@@ -36,11 +36,9 @@ public class TwitterNode extends RIONode {
 	@Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
 
-
-		System.out.println("message received");
 		//msg from server, client executes code
 		if(from == 0) {
-			String response =  packetBytesToString(msg);
+			String response = packetBytesToString(msg);
 			System.out.println("message received by client: " + response);
 
 			String results = "";
@@ -61,7 +59,7 @@ public class TwitterNode extends RIONode {
 				//check if it is a read of a '-following' file or '-tweets'
 				String filename = results.split("\\s")[1];
 
-				if(filename.endsWith("-following")){
+				if(filename.endsWith(FOLLOWERS_FILE_SUFFIX)){
 					//Send more RCP calls to fetch the tweets
 					Set<String> usernames = new HashSet<String>();
 					for(int i = 2; i < results.split("\\s").length; i++){
@@ -73,7 +71,7 @@ public class TwitterNode extends RIONode {
 					callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{usernames, outstandingAcks});
 					commandInProgress++;
 					updateSeqNum(outstandingAcks);
-				}else if(filename.endsWith("-tweets")){
+				}else if(filename.endsWith(TWEET_FILE_SUFFIX)){
 					//Return tweets to user
 					String all_tweets = results.substring(results.split("\\s")[0].length() + results.split("\\s")[1].length() + 2);
 					for(int i = 0; i < all_tweets.split("\\n").length; i++){
@@ -86,8 +84,8 @@ public class TwitterNode extends RIONode {
 					}
 				}
 			}
-			this.from = from;
-			this.protocol = protocol;
+			//this.from = from;
+			//this.protocol = protocol;
 			this.msg = msg;
 			acked.put(response_seq_num, true);
 		}
@@ -103,9 +101,10 @@ public class TwitterNode extends RIONode {
 
 			String response = request_seq_num + " " + seq_num + " ";
 			PersistentStorageWriter writer = null;
-			PersistentStorageReader reader = null;
-			PersistentStorageOutputStream byte_writer= null;
+			PersistentStorageOutputStream byte_writer = null;
 			PersistentStorageInputStream byte_reader = null;
+			
+			// execute the requested command
 			if(command.equals("create")) {
 				//  boolean file_exists = Utility.fileExists(this, filename);
 				boolean  file_exists = false;
@@ -129,7 +128,7 @@ public class TwitterNode extends RIONode {
 
 					}
 				}
-			}else if(command.equals("append")) {
+			} else if(command.equals("append")) {
 				try{
 					boolean append = false;
 					byte_reader = super.getInputStream(filename);
@@ -163,7 +162,7 @@ public class TwitterNode extends RIONode {
 					e.printStackTrace();
 				}
 				response += "okay";
-			}else if(command.equals("read")) {
+			} else if(command.equals("read")) {
 				try{
 					response += "read " + filename + " ";
 					byte_reader = super.getInputStream(filename);
@@ -180,7 +179,7 @@ public class TwitterNode extends RIONode {
 				}catch(Exception e){
 
 				}
-			}else if(command.equals("delete")){
+			} else if(command.equals("delete")){
 				//Removing followers from "-followers" file
 				//If user is not currently being followed -- does nothing
 				//If user is being followed multiple times -- removes all ocurences
@@ -232,13 +231,6 @@ public class TwitterNode extends RIONode {
 			}else{
 				response += "unknown command: " + command;
 			}
-			if(reader != null){
-				try{
-					reader.close();
-				}catch(Exception e){
-
-				}
-			}
 			if(writer != null){
 				try{
 					writer.close();
@@ -275,6 +267,7 @@ public class TwitterNode extends RIONode {
 		seq_num++;
 	}
 
+	/*
 	private byte[] read_file(PersistentStorageInputStream byte_reader){
 		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
 		try{
@@ -289,7 +282,8 @@ public class TwitterNode extends RIONode {
 		}
 		return bytes.toByteArray();
 	}
-
+*/
+	
 	@Override
 	public void start() {
 		logOutput("Starting up...");
