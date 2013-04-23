@@ -20,8 +20,14 @@ public abstract class RIONode extends Node {
 	public void onReceive(Integer from, int protocol, byte[] msg) {
 		if(protocol == Protocol.DATA) {
 			RIOLayer.RIODataReceive(from, msg);
-		}else if(protocol == Protocol.ACK) {
+		} else if(protocol == Protocol.ACK) {
 			RIOLayer.RIOAckReceive(from, msg);
+		} else if (protocol == Protocol.SESSION_START) {
+			RIOLayer.RIOSessionStartReceive(from, msg);
+		} else if (protocol == Protocol.SESSION_START_ACK) {
+			RIOLayer.RIOSessionStartAckReceive(from,msg);
+		} else {
+			System.out.println("Bad protocol: "+ protocol);
 		}
 	}
 

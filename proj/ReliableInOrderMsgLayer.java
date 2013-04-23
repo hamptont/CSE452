@@ -14,24 +14,24 @@ import edu.washington.cs.cse490h.lib.Utility;
  */
 public class ReliableInOrderMsgLayer {
 	public static int TIMEOUT = 3;
-	
+
 	private Map<Integer, InChannel> inConnections;
 	private Map<Integer, OutChannel> outConnections;
 	private RIONode n;
 
-    private Map<Integer, Queue<outstandingSendRequest>> waitingMessages;
+	private Map<Integer, Queue<outstandingSendRequest>> waitingMessages;
 
-    public class outstandingSendRequest{
-        public int destAddr;
-        public int protocol;
-        public byte[] payload;
+	public class outstandingSendRequest{
+		public int destAddr;
+		public int protocol;
+		public byte[] payload;
 
-        public outstandingSendRequest(int destAddr, int protocol, byte[] payload){
-            this.destAddr = destAddr;
-            this.protocol = protocol;
-            this.payload = payload;
-        }
-    }
+		public outstandingSendRequest(int destAddr, int protocol, byte[] payload){
+			this.destAddr = destAddr;
+			this.protocol = protocol;
+			this.payload = payload;
+		}
+	}
 
 	/**
 	 * Constructor.
@@ -48,9 +48,9 @@ public class ReliableInOrderMsgLayer {
 		outConnections = new HashMap<Integer, OutChannel>();
 		this.n = n;
 
-        waitingMessages = new HashMap<Integer, Queue<outstandingSendRequest>>();
+		waitingMessages = new HashMap<Integer, Queue<outstandingSendRequest>>();
 	}
-	
+
 	/**
 	 * Receive a data packet.
 	 * 
@@ -62,51 +62,68 @@ public class ReliableInOrderMsgLayer {
 	public void RIODataReceive(int from, byte[] msg) {
 		RIOPacket riopkt = RIOPacket.unpack(msg);
 
-        int protocol = riopkt.getProtocol();
+		//int protocol = riopkt.getProtocol();
 
-        InChannel in = inConnections.get(from);
-        if(protocol == Protocol.SESSION_START){
-            System.out.println("RIO RECEIVE: SESSION START");
-            //Other node trying to establish a connection
-            in = new InChannel();
-            inConnections.put(from, in);
+		InChannel in = inConnections.get(from);
+		if(in == null){
+			System.out.println("RIO RECEIVE: IN == NULL");
+			
+			resetConnection(from);
+			
+			//Never seen this connection before - Node recovering from failure
+			byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
+			//Don't sent message ACK - respond with SESSION_START request
+			n.send(from, Protocol.SESSION_START, seqNumByteArray);
+		} else {
+			System.out.println("RIO RECEIVE: SESSION STARTED");
+			//Session started already
 
-            // at-most-once semantics
-            byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
-            n.send(from, Protocol.SESSION_START_ACK, seqNumByteArray);
-        }else if(protocol == Protocol.SESSION_START_ACK){
-            Queue<outstandingSendRequest> requests = waitingMessages.get(from);
-            if(requests != null){
-                OutChannel out = outConnections.get(from);
+			// at-most-once semantics
+			byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
+			n.send(from, Protocol.ACK, seqNumByteArray);
 
-                for(outstandingSendRequest o : requests){
-                    //n.send(o.destAddr, o.protocol, o.payload);
-                    out.sendRIOPacket(n, o.protocol, o.payload);
-                }
-                waitingMessages.remove(from);
-            }
-        }else if(in == null){
-            System.out.println("RIO RECEIVE: IN == NULL");
-            //Never seen this connection before - Node recovering from failure
-            byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
-            //Don't sent message ACK - respond with SESSION_START request
-            n.send(from, Protocol.SESSION_START, seqNumByteArray);
-        } else {
-            System.out.println("RIO RECEIVE: SESSION STARTED");
-            //Session started already
-
-            // at-most-once semantics
-            byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
-            n.send(from, Protocol.ACK, seqNumByteArray);
-
-            LinkedList<RIOPacket> toBeDelivered = in.gotPacket(riopkt);
-            for(RIOPacket p: toBeDelivered) {
-                // deliver in-order the next sequence of packets
-                n.onRIOReceive(from, p.getProtocol(), p.getPayload());
-            }
-        }
+			LinkedList<RIOPacket> toBeDelivered = in.gotPacket(riopkt);
+			for(RIOPacket p: toBeDelivered) {
+				// deliver in-order the next sequence of packets
+				n.onRIOReceive(from, p.getProtocol(), p.getPayload());
+			}
+		}
 	}
 	
+	public void RIOSessionStartReceive(int from, byte[] msg) {
+		//RIOPacket riopkt = RIOPacket.unpack(msg);		
+		System.out.println("RIOSessionStartReceive from "+from);
+		//Other node trying to establish a connection
+		resetConnection(from);
+
+		// at-most-once semantics
+		//byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
+		n.send(from, Protocol.SESSION_START_ACK, new byte[0]);
+	}
+	
+	public void RIOSessionStartAckReceive(int from, byte[] msg) {
+		System.out.println("RIOSessionStartAckReceive from "+from);
+		Queue<outstandingSendRequest> requests = waitingMessages.get(from);
+		if(requests != null){
+			OutChannel out = outConnections.get(from);
+
+			for(outstandingSendRequest o : requests){
+				//n.send(o.destAddr, o.protocol, o.payload);
+				out.sendRIOPacket(n, o.protocol, o.payload);
+			}
+			waitingMessages.remove(from);
+		}
+	}
+	
+	private void resetConnection(int node) {
+		InChannel in = new InChannel();
+		OutChannel out = new OutChannel(this, node);
+		//Other node trying to establish a connection
+		
+		inConnections.put(node, in);
+		outConnections.put(node, out);
+	}
+
 	/**
 	 * Receive an acknowledgment packet.
 	 * 
@@ -134,28 +151,27 @@ public class ReliableInOrderMsgLayer {
 	public void RIOSend(int destAddr, int protocol, byte[] payload) {
 		OutChannel out = outConnections.get(destAddr);
 		if(out == null) {
-            System.out.println("RIO SEND: out == null");
-            //Never sent to this connection before -- start session
-			out = new OutChannel(this, destAddr);
-			outConnections.put(destAddr, out);
+			System.out.println("RIO SEND: out == null");
+			//Never sent to this connection before -- start session
+			resetConnection(destAddr);
 
-            Queue<outstandingSendRequest> requests = waitingMessages.get(destAddr);
-            if(requests == null){
-                requests = new LinkedList<outstandingSendRequest>();
-                waitingMessages.put(destAddr, requests);
-            }
-            requests.add(new outstandingSendRequest(destAddr, protocol, payload));
+			Queue<outstandingSendRequest> requests = waitingMessages.get(destAddr);
+			if(requests == null){
+				requests = new LinkedList<outstandingSendRequest>();
+				waitingMessages.put(destAddr, requests);
+			}
+			requests.add(new outstandingSendRequest(destAddr, protocol, payload));
 
-            n.send(destAddr, Protocol.SESSION_START, new byte[0]);
-
-        } else if (waitingMessages.containsKey(destAddr)) {
-            Queue<outstandingSendRequest> requests = waitingMessages.get(destAddr);
-            requests.add(new outstandingSendRequest(destAddr, protocol, payload));
-        }else {
-            System.out.println("RIO SEND: out != null");
-            //Session already started -- send message
-            out.sendRIOPacket(n, protocol, payload);
-        }
+			n.send(destAddr, Protocol.SESSION_START, new byte[0]);
+		} else if (waitingMessages.containsKey(destAddr)) {
+			System.out.println("RIO SEND: there are waiting messages");
+			Queue<outstandingSendRequest> requests = waitingMessages.get(destAddr);
+			requests.add(new outstandingSendRequest(destAddr, protocol, payload));
+		} else {
+			System.out.println("RIO SEND: out != null and session ACK'd");
+			//Session already started -- send message
+			out.sendRIOPacket(n, protocol, payload);
+		}
 	}
 
 	/**
@@ -172,14 +188,14 @@ public class ReliableInOrderMsgLayer {
 	public void onTimeout(Integer destAddr, Integer seqNum) {
 		outConnections.get(destAddr).onTimeout(n, seqNum);
 	}
-	
+
 	@Override
 	public String toString() {
 		StringBuffer sb = new StringBuffer();
 		for(Integer i: inConnections.keySet()) {
 			sb.append(inConnections.get(i).toString() + "\n");
 		}
-		
+
 		return sb.toString();
 	}
 }
@@ -190,7 +206,7 @@ public class ReliableInOrderMsgLayer {
 class InChannel {
 	private int lastSeqNumDelivered;
 	private HashMap<Integer, RIOPacket> outOfOrderMsgs;
-	
+
 	InChannel(){
 		lastSeqNumDelivered = -1;
 		outOfOrderMsgs = new HashMap<Integer, RIOPacket>();
@@ -207,7 +223,7 @@ class InChannel {
 	public LinkedList<RIOPacket> gotPacket(RIOPacket pkt) {
 		LinkedList<RIOPacket> pktsToBeDelivered = new LinkedList<RIOPacket>();
 		int seqNum = pkt.getSeqNum();
-		
+
 		if(seqNum == lastSeqNumDelivered + 1) {
 			// We were waiting for this packet
 			pktsToBeDelivered.add(pkt);
@@ -218,7 +234,7 @@ class InChannel {
 			outOfOrderMsgs.put(seqNum, pkt);
 		}
 		// Duplicate packets are ignored
-		
+
 		return pktsToBeDelivered;
 	}
 
@@ -234,7 +250,7 @@ class InChannel {
 			pktsToBeDelivered.add(outOfOrderMsgs.remove(lastSeqNumDelivered));
 		}
 	}
-	
+
 	@Override
 	public String toString() {
 		return "last delivered: " + lastSeqNumDelivered + ", outstanding: " + outOfOrderMsgs.size();
@@ -249,14 +265,14 @@ class OutChannel {
 	private int lastSeqNumSent;
 	private ReliableInOrderMsgLayer parent;
 	private int destAddr;
-	
+
 	OutChannel(ReliableInOrderMsgLayer parent, int destAddr){
 		lastSeqNumSent = -1;
 		unACKedPackets = new HashMap<Integer, RIOPacket>();
 		this.parent = parent;
 		this.destAddr = destAddr;
 	}
-	
+
 	/**
 	 * Send a new RIOPacket out on this channel.
 	 * 
@@ -272,14 +288,14 @@ class OutChannel {
 			Method onTimeoutMethod = Callback.getMethod("onTimeout", parent, new String[]{ "java.lang.Integer", "java.lang.Integer" });
 			RIOPacket newPkt = new RIOPacket(protocol, ++lastSeqNumSent, payload);
 			unACKedPackets.put(lastSeqNumSent, newPkt);
-			
+
 			n.send(destAddr, Protocol.DATA, newPkt.pack());
 			n.addTimeout(new Callback(onTimeoutMethod, parent, new Object[]{ destAddr, lastSeqNumSent }), ReliableInOrderMsgLayer.TIMEOUT);
 		}catch(Exception e) {
 			e.printStackTrace();
 		}
 	}
-	
+
 	/**
 	 * Called when a timeout for this channel triggers
 	 * 
@@ -293,7 +309,7 @@ class OutChannel {
 			resendRIOPacket(n, seqNum);
 		}
 	}
-	
+
 	/**
 	 * Called when we get an ACK back. Removes the outstanding packet if it is
 	 * still in unACKedPackets.
@@ -304,7 +320,7 @@ class OutChannel {
 	protected void gotACK(int seqNum) {
 		unACKedPackets.remove(seqNum);
 	}
-	
+
 	/**
 	 * Resend an unACKed packet.
 	 * 
@@ -317,7 +333,7 @@ class OutChannel {
 		try{
 			Method onTimeoutMethod = Callback.getMethod("onTimeout", parent, new String[]{ "java.lang.Integer", "java.lang.Integer" });
 			RIOPacket riopkt = unACKedPackets.get(seqNum);
-			
+
 			n.send(destAddr, Protocol.DATA, riopkt.pack());
 			n.addTimeout(new Callback(onTimeoutMethod, parent, new Object[]{ destAddr, seqNum }), ReliableInOrderMsgLayer.TIMEOUT);
 		}catch(Exception e) {
