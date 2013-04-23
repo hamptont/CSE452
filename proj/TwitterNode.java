@@ -633,6 +633,7 @@ public class TwitterNode extends RIONode {
             for(Long num : outstandingAcks){
                 min_ack = Math.min(num, min_ack);
             }
+            outstandingAcks = rcp_login(parameters, min_ack);
             callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
