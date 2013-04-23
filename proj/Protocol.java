@@ -19,7 +19,10 @@ public class Protocol {
 	// Protocols for Testing Reliable in-order message delivery
 	// These should be RIOPacket protocols
 	public static final int RIOTEST_PKT = 20;
-	
+
+    public static final int SESSION_START = 21;
+    public static final int SESSION_START_ACK = 22;
+
 	public static final int MAX_PROTOCOL = 127;
 
 	/**
@@ -45,7 +48,8 @@ public class Protocol {
 	 */
 	public static boolean isRIOProtocolValid(int protocol) {
 		return (protocol == VOTEREQ_PKT || protocol == VOTE_PKT
-				|| protocol == DECISION_PKT || protocol == DECISIONREQ_PKT || protocol == RIOTEST_PKT);
+				|| protocol == DECISION_PKT || protocol == DECISIONREQ_PKT || protocol == RIOTEST_PKT
+        || protocol == SESSION_START || protocol == SESSION_START_ACK);
 	}
 
 	/**
