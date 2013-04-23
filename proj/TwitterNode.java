@@ -8,10 +8,10 @@ import java.util.*;
 
 public class TwitterNode extends RIONode {
 
-    public static double getFailureRate() { return 0/100.0; }
-    public static double getRecoveryRate() { return 0/100.0; }
-    public static double getDropRate() { return 0/100.0; }
-    public static double getDelayRate() { return 0/100.0; }
+    public static double getFailureRate() { return 0.5/100.0; }
+    public static double getRecoveryRate() { return 2/100.0; }
+    public static double getDropRate() { return 2/100.0; }
+    public static double getDelayRate() { return 2/100.0; }
 
     private static boolean failed;
 
@@ -30,10 +30,13 @@ public class TwitterNode extends RIONode {
     private static final String TWEET_FILE_SUFFIX = "-tweets";
     private static final String FOLLOWERS_FILE_SUFFIX = "-following";
     private static final String INFO_FILE_SUFFIX = "-info";
+    private static final String RECOVERY_FILENAME = "server_temp";
+
 
     @Override
     public void onRIOReceive(Integer from, int protocol, byte[] msg) {
         //msg from server
+        System.out.println("message received");
         if(from == 0) {
             //Client
             String response =  packetBytesToString(msg);
@@ -66,7 +69,6 @@ public class TwitterNode extends RIONode {
                     }
                     Set<Long> outstandingAcks = rcp_read_multiple(usernames, seq_num);
 
-                //   String parameters = filename;
                     callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{usernames, outstandingAcks});
                     commandInProgress++;
                     updateSeqNum(outstandingAcks);
@@ -104,7 +106,7 @@ public class TwitterNode extends RIONode {
             PersistentStorageInputStream byte_reader = null;
             if(command.equals("create")) {
               //  boolean file_exists = Utility.fileExists(this, filename);
-                boolean  file_exists = false; //TODO currently overwrites existing files
+                boolean  file_exists = false;
                 if(file_exists){
                     //fail
                     response += "username_taken";
@@ -139,8 +141,14 @@ public class TwitterNode extends RIONode {
                         ObjectOutputStream out = new ObjectOutputStream(byte_writer);
                         String tweet = message.substring(request_seq_num.length() + command.length() + filename.length() + 3);
                         fileMap.put(request_seq_num, tweet);
+
+                        //serialize object
+                        byte[] serialized = serialize(fileMap);
+                        writeToLog(filename, serialized);
+                        System.out.println("writting to file");
                         out.writeObject(fileMap);
                         out.close();
+                        removeFromLog(filename);
                     } else {
                         System.out.println("Append not processed, timestamp already exists: " + message);
                     }
@@ -164,9 +172,6 @@ public class TwitterNode extends RIONode {
                     String username = filename.split("-")[0];
                     for(String s : fileMap.keySet()){
                         //return values -- username of people you are following
-                   //     response += s + " " + username + " " + fileMap.get(s) + "\n";
-                        //TODO: return username with tweet!!!!!
-
                         response += s + username + " " + fileMap.get(s) + "\n";
                     }
                     response = response.trim();
@@ -205,8 +210,14 @@ public class TwitterNode extends RIONode {
                         //only need to write if we made modifications
                         byte_writer = super.getOutputStream(filename, append);
                         ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+
+                        //serialize object
+                        byte[] serialized = serialize(fileMap);
+                        writeToLog(filename, serialized);
+                        System.out.println("writting to file");
                         out.writeObject(fileMap);
                         out.close();
+                        removeFromLog(filename);
                     }
 
                     //debug
@@ -291,6 +302,110 @@ public class TwitterNode extends RIONode {
         pending_commands = new LinkedList<String>();
         commandInProgress = 0;
 
+
+        //Read recovery file and write modifications
+        boolean append = false;
+        try{
+            PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
+            ObjectInputStream in = new ObjectInputStream(byte_reader);
+            TreeMap<String, byte[]> recoveryMap = (TreeMap<String, byte[]>) in.readObject();
+            in.close();
+            for(String fileName : recoveryMap.keySet()){
+                //write to file
+                System.out.println("Recovering from temp file: " + fileName);
+                byte[] fileBackup = recoveryMap.get(fileName);
+                PersistentStorageOutputStream byte_writer = super.getOutputStream(fileName, append);
+                ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+                out.writeObject(fileBackup);
+                out.close();
+                byte_writer.close();
+            }
+            byte_reader.close();
+            in.close();
+        }catch(Exception e){
+
+        }
+
+        //Write empty temp file
+        try{
+            PersistentStorageOutputStream byte_writer = super.getOutputStream(RECOVERY_FILENAME, append);
+            ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+            TreeMap<String, byte[]> fileMap = new TreeMap<String,  byte[]>();
+            out.writeObject(fileMap);
+            out.close();
+            byte_writer.close();
+        }catch(IOException e){
+
+        }
+    }
+
+    //Add file to log
+    private void writeToLog(String fileName, byte[] bytes){
+        boolean append = false;
+        System.out.println("write " + fileName + " to log");
+        try{
+            //read recovery file
+            PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
+            ObjectInputStream in = new ObjectInputStream(byte_reader);
+            TreeMap<String, byte[]> recoveryMap = (TreeMap<String, byte[]>) in.readObject();
+            in.close();
+
+            //modify recovery file
+            recoveryMap.put(fileName, bytes);
+
+            //write to file
+            PersistentStorageOutputStream byte_writer = super.getOutputStream(RECOVERY_FILENAME, append);
+            ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+            out.writeObject(recoveryMap);
+            out.close();
+        }catch(Exception e){
+
+        }
+    }
+
+    //Remove file from log
+    private void removeFromLog(String fileName){
+        boolean append = false;
+        System.out.println("remove " + fileName + " from log");
+        try{
+            //read recovery file
+            PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
+            ObjectInputStream in = new ObjectInputStream(byte_reader);
+            TreeMap<String, byte[]> recoveryMap = (TreeMap<String, byte[]>) in.readObject();
+            in.close();
+
+            //modify recovery file
+            recoveryMap.remove(fileName);
+
+            //write to file
+            PersistentStorageOutputStream byte_writer = super.getOutputStream(RECOVERY_FILENAME, append);
+            ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+            out.writeObject(recoveryMap);
+            out.close();
+        }catch(Exception e){
+
+        }
+    }
+
+    private byte[] serialize(Serializable obj){
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        ObjectOutput output = null;
+        byte[] serialized = null;
+        try{
+            output = new ObjectOutputStream(bos);
+            output.writeObject(obj);
+            serialized = bos.toByteArray();
+        }catch(Exception e){
+
+        }finally {
+            try{
+                output.close();
+                bos.close();
+            }catch(IOException e){
+
+            }
+        }
+        return serialized;
     }
 
     public void tick_callback(){
@@ -304,7 +419,6 @@ public class TwitterNode extends RIONode {
             callback("tick_callback", new String[0], new Object[0]);
         }
     }
-
 
     @Override
     public void onCommand(String command){
@@ -353,7 +467,7 @@ public class TwitterNode extends RIONode {
                 // no username specified
                 System.out.println("No username specified. Unable to login.");
             } else if(username != null){
-                //someone else already loged in
+                //someone else already logged in
                 System.out.print("Account " + username + " is currently logged in.");
                 System.out.println("Please log out before you can log in with another account.");
             }else {
@@ -386,7 +500,6 @@ public class TwitterNode extends RIONode {
                 // no username to follow
                 System.out.println("No username specified. Unable to follow user.");
             } else {
-                //TODO: does not check if user exists, and allows uses to follow same user multiple times
                 outstandingAcks = rcp_add(parameters, seq_num);
                 callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
                 commandInProgress++;
@@ -414,13 +527,15 @@ public class TwitterNode extends RIONode {
         updateSeqNum(outstandingAcks);
     }
 
-    private void rpc_call(int node, int p,String msg, long seq_num){
-        System.out.println("rcp_call sending message: " + seq_num + " " + msg);
-        RIOSend(node, p, Utility.stringToByteArray(seq_num + " " + msg));
+    private void rpc_call(int node, int p, String msg, long seq_num){
+        System.out.println("rcp_call sending message: " + node + " " + seq_num + " " + msg);
+        RIOSend(node, Protocol.RIOTEST_PKT, Utility.stringToByteArray(seq_num + " " + msg));
+        System.out.println("done sending");
     }
 
     private void callback(String methodName, String[] paramTypes, Object[] params) {
         int timeout = 10;
+        //Make tick callbacks fire every tick
         if(methodName.equals("tick_callback")){
             timeout = 1;
         }
@@ -443,6 +558,9 @@ public class TwitterNode extends RIONode {
         returned.add(seq_num);
         returned.add(seq_num + 1);
         returned.add(seq_num + 2);
+        acked.put(seq_num, false);
+        acked.put(seq_num + 1, false);
+        acked.put(seq_num + 2, false);
         return returned;
     }
 
@@ -453,16 +571,6 @@ public class TwitterNode extends RIONode {
         returned.add(seq_num);
         return returned;
     }
-
-    /*
-    //Not sending RCP call to server for log out
-    private Set<Long> rcp_logout(String parameters, long seq_num){
-        //TODO call rpc_call() method
-        //Send RPC call to server to log user out
-        Set<Long> returned = new TreeSet<Long>();
-        return returned;
-    }
-    */
 
     private Set<Long> rcp_post(String parameters, long seq_num){
         Set<Long> returned = new TreeSet<Long>();
@@ -503,6 +611,7 @@ public class TwitterNode extends RIONode {
         for(String username: usernames){
             rpc_call(0, Protocol.RIOTEST_PKT, "read " + username + TWEET_FILE_SUFFIX, seq_num + count);
             returned.add(seq_num + count);
+            acked.put(seq_num + count, false);
         }
 
         return returned;
@@ -510,7 +619,6 @@ public class TwitterNode extends RIONode {
 
 
     public void login_callback(String parameters, Set<Long> outstandingAcks) {
-    	//TODO test
     	System.out.println("login_callback called: " + parameters);
         boolean all_acked = allAcked(outstandingAcks);
 
@@ -518,47 +626,53 @@ public class TwitterNode extends RIONode {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
             }
-            String response = packetBytesToString(this.msg);
             commandInProgress--;
         } else {
         	// retry
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
             callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
-    
+
+    /*
     public void logout_callback(String parameters, Set<Long> outstandingAcks) {
-    	//TODO test
     	System.out.println("logout_callback called: " + parameters);
         boolean all_acked = allAcked(outstandingAcks);
         if(all_acked) {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
             }
-            String response = packetBytesToString(this.msg);
             commandInProgress--;
         } else {
             callback("logout_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
+    */
     
     public void delete_callback(String parameters, Set<Long> outstandingAcks) {
-    	//TODO test
     	System.out.println("delete_callback called: " + parameters);
         boolean all_acked = allAcked(outstandingAcks);
 
         if(all_acked) {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
-            }            String response = packetBytesToString(this.msg);
+            }
             commandInProgress--;
         } else {
         	// retry
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
+            rcp_delete(parameters, min_ack);
             callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
     
     public void post_callback(String parameters, Set<Long> outstandingAcks) {
-    	//TODO test
     	System.out.println("post_callback called: " + parameters);
         boolean all_acked = allAcked(outstandingAcks);
 
@@ -566,16 +680,19 @@ public class TwitterNode extends RIONode {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
             }
-            String response = packetBytesToString(this.msg);
             commandInProgress--;
         } else {
         	// retry
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
+            rcp_post(parameters, min_ack);
             callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
     
     public void add_callback(String parameters, Set<Long> outstandingAcks) {
-    	//TODO test
     	System.out.println("login_callback called: " + parameters);
         boolean all_acked = allAcked(outstandingAcks);
 
@@ -583,10 +700,14 @@ public class TwitterNode extends RIONode {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
             }
-            String response = packetBytesToString(this.msg);
             commandInProgress--;
         } else {
         	// retry
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
+            rcp_add(parameters, min_ack);
             callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
@@ -599,10 +720,14 @@ public class TwitterNode extends RIONode {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
             }
-            String response = packetBytesToString(this.msg);
             commandInProgress--;
         } else {
         	// retry
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
+            rcp_read(parameters, min_ack);
             callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
         }
     }
@@ -614,9 +739,9 @@ public class TwitterNode extends RIONode {
             for(Long ack : outstandingAcks) {
                 acked.remove(ack);
             }
-            System.out.println(username + "'s follower's tweets:");
+            System.out.println((username + "'s follower's tweets:").toUpperCase());
             for(String val : tweets.keySet()){
-                System.out.println("Tweet: " + val + " : " + tweets.get(val));
+                System.out.println( val.substring(13) + " : " + tweets.get(val));
             }
             commandInProgress--;
         } else {
