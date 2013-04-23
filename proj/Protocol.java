@@ -20,8 +20,9 @@ public class Protocol {
 	// These should be RIOPacket protocols
 	public static final int RIOTEST_PKT = 20;
 
-    public static final int SESSION_START = 21;
-    public static final int SESSION_START_ACK = 22;
+    public static final int SESSION_START = 30;
+    public static final int SESSION_START_ACK = 31;
+    public static final int TWITTER_PKT = 32;
 
 	public static final int MAX_PROTOCOL = 127;
 
@@ -34,7 +35,7 @@ public class Protocol {
 	 */
 	public static boolean isPktProtocolValid(int protocol) {
 		return (protocol == DATA || protocol == ACK || protocol == VOTEREQ_PKT
-				|| protocol == VOTE_PKT || protocol == DECISION_PKT || protocol == DECISIONREQ_PKT);
+				|| protocol == VOTE_PKT || protocol == DECISION_PKT || protocol == DECISIONREQ_PKT || protocol == TWITTER_PKT);
 	}
 
 	/**
@@ -49,7 +50,7 @@ public class Protocol {
 	public static boolean isRIOProtocolValid(int protocol) {
 		return (protocol == VOTEREQ_PKT || protocol == VOTE_PKT
 				|| protocol == DECISION_PKT || protocol == DECISIONREQ_PKT || protocol == RIOTEST_PKT
-        || protocol == SESSION_START || protocol == SESSION_START_ACK);
+        || protocol == SESSION_START || protocol == SESSION_START_ACK || protocol == TWITTER_PKT);
 	}
 
 	/**
@@ -77,6 +78,12 @@ public class Protocol {
 			return "Decision Request Packet";
 		case RIOTEST_PKT:
 			return "RIO Testing Packet";
+		case SESSION_START:
+			return "RIO Session Request";
+		case SESSION_START_ACK:
+			return "RIO Session Ack";
+		case TWITTER_PKT:
+			return "Twitter Info Packet";
 		default:
 			return "Unknown Protocol";
 		}

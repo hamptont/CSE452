@@ -62,22 +62,20 @@ public class ReliableInOrderMsgLayer {
 	public void RIODataReceive(int from, byte[] msg) {
 		RIOPacket riopkt = RIOPacket.unpack(msg);
 
-		//int protocol = riopkt.getProtocol();
-
 		InChannel in = inConnections.get(from);
 		if(in == null){
-			System.out.println("RIO RECEIVE: IN == NULL");
-			
-			resetConnection(from);
+			System.out.println("RIO RECEIVE: connections not yet established with "+from);
 			
 			//Never seen this connection before - Node recovering from failure
-			byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
+			resetConnections(from);
+			
 			//Don't sent message ACK - respond with SESSION_START request
-			n.send(from, Protocol.SESSION_START, seqNumByteArray);
+			n.send(from, Protocol.SESSION_START, new byte[0]);
 		} else {
-			System.out.println("RIO RECEIVE: SESSION STARTED");
+			System.out.println("RIO RECEIVE: normal operation");
 			//Session started already
 
+			// ACK the received packet
 			// at-most-once semantics
 			byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
 			n.send(from, Protocol.ACK, seqNumByteArray);
@@ -90,17 +88,31 @@ public class ReliableInOrderMsgLayer {
 		}
 	}
 	
+	/**
+	 * Receive a session start request.
+	 * 
+	 * @param from
+	 *            The address from which the data packet came
+	 * @param pkt
+	 *            The Packet of data
+	 */
 	public void RIOSessionStartReceive(int from, byte[] msg) {
-		//RIOPacket riopkt = RIOPacket.unpack(msg);		
 		System.out.println("RIOSessionStartReceive from "+from);
+		
 		//Other node trying to establish a connection
-		resetConnection(from);
+		resetConnections(from);
 
-		// at-most-once semantics
-		//byte[] seqNumByteArray = Utility.stringToByteArray("" + riopkt.getSeqNum());
 		n.send(from, Protocol.SESSION_START_ACK, new byte[0]);
 	}
 	
+	/**
+	 * Receive a session start ack.
+	 * 
+	 * @param from
+	 *            The address from which the data packet came
+	 * @param pkt
+	 *            The Packet of data
+	 */
 	public void RIOSessionStartAckReceive(int from, byte[] msg) {
 		System.out.println("RIOSessionStartAckReceive from "+from);
 		Queue<outstandingSendRequest> requests = waitingMessages.get(from);
@@ -115,11 +127,10 @@ public class ReliableInOrderMsgLayer {
 		}
 	}
 	
-	private void resetConnection(int node) {
+	// create new in and outChannels for the given node
+	private void resetConnections(int node) {
 		InChannel in = new InChannel();
 		OutChannel out = new OutChannel(this, node);
-		//Other node trying to establish a connection
-		
 		inConnections.put(node, in);
 		outConnections.put(node, out);
 	}
@@ -151,9 +162,9 @@ public class ReliableInOrderMsgLayer {
 	public void RIOSend(int destAddr, int protocol, byte[] payload) {
 		OutChannel out = outConnections.get(destAddr);
 		if(out == null) {
-			System.out.println("RIO SEND: out == null");
+			System.out.println("RIO SEND: connection not established, sending new session request");
 			//Never sent to this connection before -- start session
-			resetConnection(destAddr);
+			resetConnections(destAddr);
 
 			Queue<outstandingSendRequest> requests = waitingMessages.get(destAddr);
 			if(requests == null){
@@ -164,11 +175,11 @@ public class ReliableInOrderMsgLayer {
 
 			n.send(destAddr, Protocol.SESSION_START, new byte[0]);
 		} else if (waitingMessages.containsKey(destAddr)) {
-			System.out.println("RIO SEND: there are waiting messages");
+			System.out.println("RIO SEND: queueing new message while awaiting session start ack");
 			Queue<outstandingSendRequest> requests = waitingMessages.get(destAddr);
 			requests.add(new outstandingSendRequest(destAddr, protocol, payload));
 		} else {
-			System.out.println("RIO SEND: out != null and session ACK'd");
+			System.out.println("RIO SEND: normal operation");
 			//Session already started -- send message
 			out.sendRIOPacket(n, protocol, payload);
 		}
