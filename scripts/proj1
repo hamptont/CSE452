@@ -1,16 +1,46 @@
 start 0
 start 1
 time
-1 create username
+1 create user1
 time
-1 login username
+1 login user1
 time
-1 post test1
+1 post hello world
 time
-1 post test2
+1 post tweet tweet hashtag
 time
-1 post test3
+1 logout user1
 time
-1 post test4
+1 create user2
 time
-1 post test5
+1 login user2
+time
+1 add user1
+time
+1 read
+time
+1 post user two tweeting
+time
+1 logout user2
+time
+1 create user3
+time
+1 login user3
+time
+1 add user1
+1 add user2
+time
+1 read
+time
+1 post user3 tweeting
+time
+1 logout user3
+time
+1 login user1
+time
+1 add user3
+time
+1 read
+time
+1 logout
+time
