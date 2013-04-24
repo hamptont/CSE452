@@ -87,7 +87,7 @@ public class ReliableInOrderMsgLayer {
 			
 			//Don't sent message ACK - respond with SESSION_START request
 			sendSessionReqPacket(from);
-		} else {
+		} else if (!awaitingSessionAck.contains(from)){
 			System.out.println("RIO RECEIVE: normal operation");
 			//Session started already
 
@@ -101,6 +101,8 @@ public class ReliableInOrderMsgLayer {
 				// deliver in-order the next sequence of packets
 				n.onRIOReceive(from, p.getProtocol(), p.getPayload());
 			}
+		} else {
+			System.out.println("RIO RECEIVE: packet discarded, session not established");
 		}
 	}
 	
