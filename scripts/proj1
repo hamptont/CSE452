@@ -38,7 +38,11 @@ time
 time
 1 login user1
 time
-1 add user3
+1 add user2
+time
+1 logout user1
+time
+1 login user1
 time
 1 read
 time
