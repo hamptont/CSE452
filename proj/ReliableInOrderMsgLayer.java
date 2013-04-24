@@ -19,17 +19,32 @@ public class ReliableInOrderMsgLayer {
 	private Map<Integer, OutChannel> outConnections;
 	private RIONode n;
 
-	private Map<Integer, Queue<outstandingSendRequest>> waitingMessages;
+	private Map<Integer, Set<OutstandingSendRequest>> waitingMessages;
+	private Set<Integer> awaitingSessionAck;
 
-	public class outstandingSendRequest{
+	private class OutstandingSendRequest{
 		public int destAddr;
 		public int protocol;
 		public byte[] payload;
 
-		public outstandingSendRequest(int destAddr, int protocol, byte[] payload){
+		public OutstandingSendRequest(int destAddr, int protocol, byte[] payload){
 			this.destAddr = destAddr;
 			this.protocol = protocol;
 			this.payload = payload;
+		}
+		
+		public int hashCode() {
+			return destAddr ^ protocol ^ payload.hashCode();			
+		}
+		
+		public boolean equals(Object o) {
+			if(o == null || getClass() != o.getClass()) {
+				return false;
+			}
+			
+			OutstandingSendRequest other = (OutstandingSendRequest)o;
+			
+			return destAddr == other.destAddr && protocol == other.protocol && Arrays.equals(payload, other.payload);
 		}
 	}
 
@@ -48,7 +63,8 @@ public class ReliableInOrderMsgLayer {
 		outConnections = new HashMap<Integer, OutChannel>();
 		this.n = n;
 
-		waitingMessages = new HashMap<Integer, Queue<outstandingSendRequest>>();
+		waitingMessages = new HashMap<Integer, Set<OutstandingSendRequest>>();
+		awaitingSessionAck = new HashSet<Integer>();
 	}
 
 	/**
@@ -70,7 +86,7 @@ public class ReliableInOrderMsgLayer {
 			resetConnections(from);
 			
 			//Don't sent message ACK - respond with SESSION_START request
-			n.send(from, Protocol.SESSION_START, new byte[0]);
+			sendSessionReqPacket(from);
 		} else {
 			System.out.println("RIO RECEIVE: normal operation");
 			//Session started already
@@ -115,16 +131,17 @@ public class ReliableInOrderMsgLayer {
 	 */
 	public void RIOSessionStartAckReceive(int from, byte[] msg) {
 		System.out.println("RIOSessionStartAckReceive from "+from);
-		Queue<outstandingSendRequest> requests = waitingMessages.get(from);
+		Set<OutstandingSendRequest> requests = waitingMessages.get(from);
 		if(requests != null){
 			OutChannel out = outConnections.get(from);
 
-			for(outstandingSendRequest o : requests){
+			for(OutstandingSendRequest o : requests){
 				//n.send(o.destAddr, o.protocol, o.payload);
 				out.sendRIOPacket(n, o.protocol, o.payload);
 			}
 			waitingMessages.remove(from);
 		}
+		awaitingSessionAck.remove(from);
 	}
 	
 	// create new in and outChannels for the given node
@@ -166,18 +183,19 @@ public class ReliableInOrderMsgLayer {
 			//Never sent to this connection before -- start session
 			resetConnections(destAddr);
 
-			Queue<outstandingSendRequest> requests = waitingMessages.get(destAddr);
+			// add the RIOSend request to the queue
+			Set<OutstandingSendRequest> requests = waitingMessages.get(destAddr);
 			if(requests == null){
-				requests = new LinkedList<outstandingSendRequest>();
+				requests = new LinkedHashSet<OutstandingSendRequest>();
 				waitingMessages.put(destAddr, requests);
 			}
-			requests.add(new outstandingSendRequest(destAddr, protocol, payload));
+			requests.add(new OutstandingSendRequest(destAddr, protocol, payload));
 
-			n.send(destAddr, Protocol.SESSION_START, new byte[0]);
+			sendSessionReqPacket(destAddr);			
 		} else if (waitingMessages.containsKey(destAddr)) {
 			System.out.println("RIO SEND: queueing new message while awaiting session start ack");
-			Queue<outstandingSendRequest> requests = waitingMessages.get(destAddr);
-			requests.add(new outstandingSendRequest(destAddr, protocol, payload));
+			Set<OutstandingSendRequest> requests = waitingMessages.get(destAddr);
+			requests.add(new OutstandingSendRequest(destAddr, protocol, payload));
 		} else {
 			System.out.println("RIO SEND: normal operation");
 			//Session already started -- send message
@@ -208,6 +226,42 @@ public class ReliableInOrderMsgLayer {
 		}
 
 		return sb.toString();
+	}
+	
+	/**
+	 * Called when a timeout for this channel triggers
+	 * 
+	 * @param n
+	 *            The sender and parent of this channel
+	 * @param seqNum
+	 *            The sequence number of the unACKed packet
+	 */
+	public void sessionReqTimeout(Integer destAddr) {
+		if(awaitingSessionAck.contains(destAddr)) {
+			sendSessionReqPacket(destAddr);
+		}
+		
+	}
+
+	/**
+	 * Resend an unACKed Session request packet.
+	 * 
+	 * @param n
+	 *            The sender and parent of this channel
+	 * @param seqNum
+	 *            The sequence number of the unACKed packet
+	 */
+	private void sendSessionReqPacket(Integer destAddr) {
+		try{
+			Method onTimeoutMethod = Callback.getMethod("sessionReqTimeout", this, new String[]{ "java.lang.Integer"});
+
+			n.send(destAddr, Protocol.SESSION_START, new byte[0]);
+			awaitingSessionAck.add(destAddr);
+			
+			n.addTimeout(new Callback(onTimeoutMethod, this, new Object[]{ destAddr }), ReliableInOrderMsgLayer.TIMEOUT);
+		}catch(Exception e) {
+			e.printStackTrace();
+		}
 	}
 }
 

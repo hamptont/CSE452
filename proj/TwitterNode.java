@@ -7,11 +7,10 @@ import java.io.*;
 import java.util.*;
 
 public class TwitterNode extends RIONode {
-
 	public static double getFailureRate() { return 0.0/100.0; }
 	public static double getRecoveryRate() { return 0/100.0; }
-	public static double getDropRate() { return 0/100.0; }
-	public static double getDelayRate() { return 0/100.0; }
+	public static double getDropRate() { return 20/100.0; }
+	public static double getDelayRate() { return 20/100.0; }
 
 	private static boolean failed;
 
