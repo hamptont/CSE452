@@ -7,10 +7,10 @@ import java.io.*;
 import java.util.*;
 
 public class TwitterNode extends RIONode {
-	public static double getFailureRate() { return 0.0/100.0; }
+	public static double getFailureRate() { return 0/100.0; }
 	public static double getRecoveryRate() { return 0/100.0; }
-	public static double getDropRate() { return 20/100.0; }
-	public static double getDelayRate() { return 20/100.0; }
+	public static double getDropRate() { return 0/100.0; }
+	public static double getDelayRate() { return 0/100.0; }
 
 	private static boolean failed;
 
@@ -98,18 +98,23 @@ public class TwitterNode extends RIONode {
 			String command = message.split("\\s")[1];
 			String filename =  message.split("\\s")[2];
 
+			// update the sequence num to the max of the current or the remote seq num
+			seq_num = Math.max(Long.parseLong(request_seq_num), seq_num);
+
+			// start building the response: (request#) (server's current seq num)
 			String response = request_seq_num + " " + seq_num + " ";
+
 			PersistentStorageWriter writer = null;
 			PersistentStorageOutputStream byte_writer = null;
 			PersistentStorageInputStream byte_reader = null;
-			
+
 			// execute the requested command
 			if(command.equals("create")) {
-				//  boolean file_exists = Utility.fileExists(this, filename);
-				boolean  file_exists = false;
+				//boolean file_exists = Utility.fileExists(this, filename);
+				boolean file_exists = false;
 				if(file_exists){
-					//fail
-					response += "username_taken";
+					//error? 
+					response += "ERROR: file exists";
 				}else{
 					response += "okay";
 					try{
@@ -122,6 +127,7 @@ public class TwitterNode extends RIONode {
 						TreeMap<String, String> fileMap = new TreeMap<String, String>();
 						out.writeObject(fileMap);
 						out.close();
+						byte_writer.close();
 
 					}catch(Exception e){
 
@@ -134,6 +140,7 @@ public class TwitterNode extends RIONode {
 					ObjectInputStream in = new ObjectInputStream(byte_reader);
 					TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
 					in.close();
+					byte_reader.close();
 
 					if(!fileMap.containsKey(request_seq_num)){
 						//duplicate request
@@ -148,6 +155,7 @@ public class TwitterNode extends RIONode {
 						System.out.println("writting to file");
 						out.writeObject(fileMap);
 						out.close();
+						byte_writer.close();
 						removeFromLog(filename);
 					} else {
 						System.out.println("Append not processed, timestamp already exists: " + message);
@@ -281,8 +289,8 @@ public class TwitterNode extends RIONode {
 		}
 		return bytes.toByteArray();
 	}
-*/
-	
+	 */
+
 	@Override
 	public void start() {
 		logOutput("Starting up...");
@@ -322,62 +330,63 @@ public class TwitterNode extends RIONode {
 
 		//Write empty temp file
 		try{
-			PersistentStorageOutputStream byte_writer = super.getOutputStream(RECOVERY_FILENAME, append);
-			ObjectOutputStream out = new ObjectOutputStream(byte_writer);
-			TreeMap<String, byte[]> fileMap = new TreeMap<String,  byte[]>();
-			out.writeObject(fileMap);
-			out.close();
-			byte_writer.close();
+			writeToRecovery(new TreeMap<String,  byte[]>());
 		}catch(IOException e){
-
+			
 		}
+	}
+	
+	private Map<String, byte[]> getRecoveryMap() throws IOException, ClassNotFoundException {
+		//read recovery file
+		PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
+		ObjectInputStream in = new ObjectInputStream(byte_reader);
+		Map<String, byte[]> recoveryMap = (Map<String, byte[]>) in.readObject();
+		in.close();
+		byte_reader.close();
+		return recoveryMap;
+	}
+	
+	private void writeToRecovery(Map<String, byte[]> recoveryMap) throws IOException {
+		PersistentStorageOutputStream byte_writer = super.getOutputStream(RECOVERY_FILENAME, false);
+		ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+		out.writeObject(recoveryMap);
+		out.close();
+		byte_writer.close();
 	}
 
 	//Add file to log
 	private void writeToLog(String fileName, byte[] bytes){
-		boolean append = false;
 		System.out.println("write " + fileName + " to log");
 		try{
 			//read recovery file
-			PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
-			ObjectInputStream in = new ObjectInputStream(byte_reader);
-			TreeMap<String, byte[]> recoveryMap = (TreeMap<String, byte[]>) in.readObject();
-			in.close();
+			Map<String, byte[]> recoveryMap = getRecoveryMap();
 
 			//modify recovery file
 			recoveryMap.put(fileName, bytes);
 
 			//write to file
-			PersistentStorageOutputStream byte_writer = super.getOutputStream(RECOVERY_FILENAME, append);
-			ObjectOutputStream out = new ObjectOutputStream(byte_writer);
-			out.writeObject(recoveryMap);
-			out.close();
+			writeToRecovery(recoveryMap);
 		}catch(Exception e){
-
+			System.out.println("ERROR - Could not write recovery file.");
+			e.printStackTrace();
 		}
 	}
 
 	//Remove file from log
 	private void removeFromLog(String fileName){
-		boolean append = false;
 		System.out.println("remove " + fileName + " from log");
 		try{
 			//read recovery file
-			PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
-			ObjectInputStream in = new ObjectInputStream(byte_reader);
-			TreeMap<String, byte[]> recoveryMap = (TreeMap<String, byte[]>) in.readObject();
-			in.close();
+			Map<String, byte[]> recoveryMap = getRecoveryMap();
 
 			//modify recovery file
 			recoveryMap.remove(fileName);
 
 			//write to file
-			PersistentStorageOutputStream byte_writer = super.getOutputStream(RECOVERY_FILENAME, append);
-			ObjectOutputStream out = new ObjectOutputStream(byte_writer);
-			out.writeObject(recoveryMap);
-			out.close();
+			writeToRecovery(recoveryMap);
 		}catch(Exception e){
-
+			System.out.println("ERROR - Could not write recovery file.");
+			e.printStackTrace();
 		}
 	}
 
@@ -402,25 +411,27 @@ public class TwitterNode extends RIONode {
 		return serialized;
 	}
 
-	public void tick_callback(){
+	public void commandTickCallback(){
 		if(commandInProgress == 0 && !pending_commands.isEmpty()){
 			String command = pending_commands.remove();
-			System.out.println("!!! " + command);
+			System.out.println("executing command: " + command);
 			onCommand_ordered(command);
 		}
 
 		if(!pending_commands.isEmpty()) {
-			callback("tick_callback", new String[0], new Object[0]);
+			callback("commandTickCallback", new String[0], new Object[0]);
 		}
 	}
 
 	@Override
 	public void onCommand(String command){
 		if(pending_commands.isEmpty()){
-			callback("tick_callback", new String[0], new Object[0]);
+			// start a command tick if necessary
+			callback("commandTickCallback", new String[0], new Object[0]);
 		}
+		
+		// queue up the command
 		pending_commands.add(command);
-
 	}
 
 	private void onCommand_ordered(String command) {
@@ -530,7 +541,7 @@ public class TwitterNode extends RIONode {
 	private void callback(String methodName, String[] paramTypes, Object[] params) {
 		int timeout = 10;
 		//Make tick callbacks fire every tick
-		if(methodName.equals("tick_callback")){
+		if(methodName.equals("commandTickCallback")){
 			timeout = 1;
 		}
 		try {
@@ -688,7 +699,7 @@ public class TwitterNode extends RIONode {
 	}
 
 	public void add_callback(String parameters, Set<Long> outstandingAcks) {
-		System.out.println("login_callback called: " + parameters);
+		System.out.println("add_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
 
 		if(all_acked) {
