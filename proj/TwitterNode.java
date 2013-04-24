@@ -7,10 +7,10 @@ import java.io.*;
 import java.util.*;
 
 public class TwitterNode extends RIONode {
-	public static double getFailureRate() { return 0.0/100.0; }
+	public static double getFailureRate() { return 0/100.0; }
 	public static double getRecoveryRate() { return 0/100.0; }
-	public static double getDropRate() { return 20/100.0; }
-	public static double getDelayRate() { return 20/100.0; }
+	public static double getDropRate() { return 0/100.0; }
+	public static double getDelayRate() { return 0/100.0; }
 
 	private static boolean failed;
 
@@ -110,11 +110,11 @@ public class TwitterNode extends RIONode {
 
 			// execute the requested command
 			if(command.equals("create")) {
-				//  boolean file_exists = Utility.fileExists(this, filename);
+				//boolean file_exists = Utility.fileExists(this, filename);
 				boolean file_exists = false;
 				if(file_exists){
-					//fail
-					response += "username_taken";
+					//error? 
+					response += "ERROR: file exists";
 				}else{
 					response += "okay";
 					try{
@@ -411,25 +411,27 @@ public class TwitterNode extends RIONode {
 		return serialized;
 	}
 
-	public void tick_callback(){
+	public void commandTickCallback(){
 		if(commandInProgress == 0 && !pending_commands.isEmpty()){
 			String command = pending_commands.remove();
-			System.out.println("!!! " + command);
+			System.out.println("executing command: " + command);
 			onCommand_ordered(command);
 		}
 
 		if(!pending_commands.isEmpty()) {
-			callback("tick_callback", new String[0], new Object[0]);
+			callback("commandTickCallback", new String[0], new Object[0]);
 		}
 	}
 
 	@Override
 	public void onCommand(String command){
 		if(pending_commands.isEmpty()){
-			callback("tick_callback", new String[0], new Object[0]);
+			// start a command tick if necessary
+			callback("commandTickCallback", new String[0], new Object[0]);
 		}
+		
+		// queue up the command
 		pending_commands.add(command);
-
 	}
 
 	private void onCommand_ordered(String command) {
@@ -539,7 +541,7 @@ public class TwitterNode extends RIONode {
 	private void callback(String methodName, String[] paramTypes, Object[] params) {
 		int timeout = 10;
 		//Make tick callbacks fire every tick
-		if(methodName.equals("tick_callback")){
+		if(methodName.equals("commandTickCallback")){
 			timeout = 1;
 		}
 		try {
@@ -697,7 +699,7 @@ public class TwitterNode extends RIONode {
 	}
 
 	public void add_callback(String parameters, Set<Long> outstandingAcks) {
-		System.out.println("login_callback called: " + parameters);
+		System.out.println("add_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
 
 		if(all_acked) {
