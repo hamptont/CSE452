@@ -35,9 +35,7 @@ public class TwitterNode extends RIONode {
     private static final String JSON_MSG = "msg";
     private static final String JSON_REQUEST_ID = "request_id";
     private static final String JSON_CURRENT_SEQ_NUM = "current_seq_num";
-
-
-
+    private static final String JSON_TRANSACTION_ID = "tid";
 
     @Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
@@ -51,17 +49,8 @@ public class TwitterNode extends RIONode {
 
         //msg from server, client executes code
 		if(from == 0) {
-
             System.out.println("message received by client: " + json);
 
-
-			try {
-			//	results = message.substring(message.split("\\s")[0].length() + 1);
-			}catch(Exception e){
-				//no results
-			}
-
-			System.out.println("server response: " + received);
 			String command = received.split("\\s")[0];
 			//check to see if more RCP calls need to be sent
 			if(command.equals("read")){
@@ -114,23 +103,18 @@ public class TwitterNode extends RIONode {
 
 			// execute the requested command
 			if(command.equals("create")) {
-				//boolean file_exists = Utility.fileExists(this, filename);
-				boolean file_exists = false;
-				if(file_exists){
-					//error? 
-					response += "ERROR: file exists";
-				}else{
-					response += "okay";
-					try{
-						boolean append = false;
-						writer = super.getWriter(filename, append);
-						TreeMap<String, String> fileMap = new TreeMap<String, String>();
-                        writer.write(mapToJson(fileMap));
 
-					}catch(Exception e){
+                response += "okay";
+                try{
+                    boolean append = false;
+                    writer = super.getWriter(filename, append);
+                    TreeMap<String, String> fileMap = new TreeMap<String, String>();
+                    writer.write(mapToJson(fileMap));
 
-					}
-				}
+                }catch(Exception e){
+                    e.printStackTrace();
+                }
+
 			} else if(command.equals("append")) {
 				try{
 					boolean append = false;
@@ -144,7 +128,7 @@ public class TwitterNode extends RIONode {
 						String tweet = received.substring(command.length() + filename.length() + 2);
 						fileMap.put(request_id, tweet);
 
-						//serialize object
+						//serialize object to json
 						String serialized = mapToJson(fileMap);
 
                         System.out.println("writing to file");
@@ -211,7 +195,7 @@ public class TwitterNode extends RIONode {
 						//serialize object
 						String serialized = mapToJson(fileMap);
 						writeToLog(filename, serialized);
-						System.out.println("writting to file");
+						System.out.println("writing to file");
 						writer.write(serialized);
 						removeFromLog(filename);
 					}
@@ -606,21 +590,6 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
-	/*
-    public void logout_callback(String parameters, Set<Long> outstandingAcks) {
-    	System.out.println("logout_callback called: " + parameters);
-        boolean all_acked = allAcked(outstandingAcks);
-        if(all_acked) {
-            for(Long ack : outstandingAcks) {
-                acked.remove(ack);
-            }
-            commandInProgress--;
-        } else {
-            callback("logout_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
-        }
-    }
-	 */
-
 	public void delete_callback(String parameters, Set<Long> outstandingAcks) {
 		System.out.println("delete_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
@@ -732,12 +701,10 @@ public class TwitterNode extends RIONode {
 				acked.remove(ack);
 			}
 			String response = packetBytesToString(this.msg);
-			if(response.equals("username_taken")){   //TODO: fix or remove
-				System.out.println("Username: " + parameters + "taken. Try again.");
-			} else {
-				System.out.println("Account created!");
-				System.out.println("response: " + response);
-			}
+
+            System.out.println("Account created!");
+            System.out.println("response: " + response);
+
 			commandInProgress--;
 		} else {
 			long min_ack = Long.MAX_VALUE;
