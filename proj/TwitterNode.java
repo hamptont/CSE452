@@ -1,9 +1,12 @@
 //Hampton Terry - hterry
 //Jacob Sanders - jacobs22
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import edu.washington.cs.cse490h.lib.*;
 
 import java.io.*;
+import java.lang.reflect.Type;
 import java.util.*;
 
 public class TwitterNode extends RIONode {
@@ -12,11 +15,7 @@ public class TwitterNode extends RIONode {
 	public static double getDropRate() { return 0/100.0; }
 	public static double getDelayRate() { return 0/100.0; }
 
-	private static boolean failed;
-
 	private Map<Long, Boolean> acked;
-	//private Integer from;
-	//private int protocol;
 	private byte[] msg;
 
 	private long seq_num;
@@ -26,7 +25,9 @@ public class TwitterNode extends RIONode {
 	private String username;
 	private Map<String, String> tweets;
 
-	private static final String TWEET_FILE_SUFFIX = "-tweets";
+    private Gson gson;
+
+    private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
@@ -34,7 +35,6 @@ public class TwitterNode extends RIONode {
 
 	@Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
-
 		//msg from server, client executes code
 		if(from == 0) {
 			String response = packetBytesToString(msg);
@@ -83,8 +83,7 @@ public class TwitterNode extends RIONode {
 					}
 				}
 			}
-			//this.from = from;
-			//this.protocol = protocol;
+
 			this.msg = msg;
 			acked.put(response_seq_num, true);
 		}
@@ -105,7 +104,6 @@ public class TwitterNode extends RIONode {
 			String response = request_seq_num + " " + seq_num + " ";
 
 			PersistentStorageWriter writer = null;
-			PersistentStorageOutputStream byte_writer = null;
 			PersistentStorageInputStream byte_reader = null;
 
 			// execute the requested command
@@ -120,14 +118,8 @@ public class TwitterNode extends RIONode {
 					try{
 						boolean append = false;
 						writer = super.getWriter(filename, append);
-						writer.write("");
-
-						byte_writer = super.getOutputStream(filename, append);
-						ObjectOutputStream out = new ObjectOutputStream(byte_writer);
 						TreeMap<String, String> fileMap = new TreeMap<String, String>();
-						out.writeObject(fileMap);
-						out.close();
-						byte_writer.close();
+                        writer.write(mapToJson(fileMap));
 
 					}catch(Exception e){
 
@@ -136,26 +128,22 @@ public class TwitterNode extends RIONode {
 			} else if(command.equals("append")) {
 				try{
 					boolean append = false;
-					byte_reader = super.getInputStream(filename);
-					ObjectInputStream in = new ObjectInputStream(byte_reader);
-					TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
-					in.close();
-					byte_reader.close();
+                    PersistentStorageReader in = super.getReader(filename);
+                    Map<String, String> fileMap = jsonToMap(in.readLine());
+                    in.close();
 
 					if(!fileMap.containsKey(request_seq_num)){
 						//duplicate request
-						byte_writer = super.getOutputStream(filename, append);
-						ObjectOutputStream out = new ObjectOutputStream(byte_writer);
+						writer = super.getWriter(filename, append);
 						String tweet = message.substring(request_seq_num.length() + command.length() + filename.length() + 3);
 						fileMap.put(request_seq_num, tweet);
 
 						//serialize object
-						byte[] serialized = serialize(fileMap);
-						writeToLog(filename, serialized);
-						System.out.println("writting to file");
-						out.writeObject(fileMap);
-						out.close();
-						byte_writer.close();
+						String serialized = mapToJson(fileMap);
+
+                        System.out.println("writing to file");
+                        writeToLog(filename, serialized);
+						writer.write(serialized);
 						removeFromLog(filename);
 					} else {
 						System.out.println("Append not processed, timestamp already exists: " + message);
@@ -172,10 +160,9 @@ public class TwitterNode extends RIONode {
 			} else if(command.equals("read")) {
 				try{
 					response += "read " + filename + " ";
-					byte_reader = super.getInputStream(filename);
-					ObjectInputStream in = new ObjectInputStream(byte_reader);
-					TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
-					in.close();
+                    PersistentStorageReader in = super.getReader(filename);
+                    Map<String, String> fileMap = jsonToMap(in.readLine());
+                    in.close();
 
 					String username = filename.split("-")[0];
 					for(String s : fileMap.keySet()){
@@ -193,10 +180,10 @@ public class TwitterNode extends RIONode {
 				try{
 					//read in treemap from file
 					boolean append = false;
-					byte_reader = super.getInputStream(filename);
-					ObjectInputStream in = new ObjectInputStream(byte_reader);
-					TreeMap<String, String> fileMap = (TreeMap<String, String>) in.readObject();
-					in.close();
+
+                    PersistentStorageReader in = super.getReader(filename);
+                    Map<String, String> fileMap = jsonToMap(in.readLine());
+                    in.close();
 
 					String unfollow_username = message.substring(request_seq_num.length() + command.length() + filename.length() + 3);
 					if(fileMap.values().contains(unfollow_username)){
@@ -215,16 +202,11 @@ public class TwitterNode extends RIONode {
 							fileMap.remove(key);
 						}
 
-						//only need to write if we made modifications
-						byte_writer = super.getOutputStream(filename, append);
-						ObjectOutputStream out = new ObjectOutputStream(byte_writer);
-
 						//serialize object
-						byte[] serialized = serialize(fileMap);
+						String serialized = mapToJson(fileMap);
 						writeToLog(filename, serialized);
 						System.out.println("writting to file");
-						out.writeObject(fileMap);
-						out.close();
+						writer.write(serialized);
 						removeFromLog(filename);
 					}
 
@@ -252,13 +234,6 @@ public class TwitterNode extends RIONode {
 
 				}
 			}
-			if(byte_writer != null){
-				try{
-					byte_writer.close();
-				}catch(Exception e){
-
-				}
-			}
 
 			System.out.println("Server sending response: " + request_seq_num);
 			RIOSend(1, Protocol.TWITTER_PKT, response.getBytes());
@@ -274,23 +249,6 @@ public class TwitterNode extends RIONode {
 		seq_num++;
 	}
 
-	/*
-	private byte[] read_file(PersistentStorageInputStream byte_reader){
-		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-		try{
-			byte[] next_bytes = new byte[1024];
-			int bytesRead = 0;
-			while(bytesRead > 0){
-				bytesRead = byte_reader.read(next_bytes);
-				bytes.write(next_bytes, 0, bytesRead);
-			}
-		}catch(IOException e){
-
-		}
-		return bytes.toByteArray();
-	}
-	 */
-
 	@Override
 	public void start() {
 		logOutput("Starting up...");
@@ -304,65 +262,75 @@ public class TwitterNode extends RIONode {
 		tweets = new HashMap<String, String>();
 		pending_commands = new LinkedList<String>();
 		commandInProgress = 0;
+        gson = new Gson();
 
-		//Read recovery file and write modifications
-		boolean append = false;
-		try{
-			PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
-			ObjectInputStream in = new ObjectInputStream(byte_reader);
-			TreeMap<String, byte[]> recoveryMap = (TreeMap<String, byte[]>) in.readObject();
-			in.close();
-			for(String fileName : recoveryMap.keySet()){
-				//write to file
-				System.out.println("Recovering from temp file: " + fileName);
-				byte[] fileBackup = recoveryMap.get(fileName);
-				PersistentStorageOutputStream byte_writer = super.getOutputStream(fileName, append);
-				ObjectOutputStream out = new ObjectOutputStream(byte_writer);
-				out.writeObject(fileBackup);
-				out.close();
-				byte_writer.close();
-			}
-			byte_reader.close();
-			in.close();
-		}catch(Exception e){
-
-		}
+        readRecoveryFileAndApplyChanges();
 
 		//Write empty temp file
 		try{
-			writeToRecovery(new TreeMap<String,  byte[]>());
+			writeToRecovery(new TreeMap<String,  String>());
 		}catch(IOException e){
 			
 		}
 	}
+
+    private void readRecoveryFileAndApplyChanges(){
+        //Read recovery file and write modifications
+        boolean append = false;
+        try{
+            PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
+            ObjectInputStream in = new ObjectInputStream(byte_reader);
+            TreeMap<String,String> recoveryMap = (TreeMap<String, String>) in.readObject();
+            in.close();
+            for(String fileName : recoveryMap.keySet()){
+                //write to file
+                System.out.println("Recovering from temp file: " + fileName);
+                String fileBackup = recoveryMap.get(fileName);
+                PersistentStorageWriter byte_writer = super.getWriter(fileName, append);
+                byte_writer.write(fileBackup);
+                byte_writer.close();
+            }
+            byte_reader.close();
+            in.close();
+        }catch(Exception e){
+
+        }
+    }
+
+    private String mapToJson(Map<String, String> map) {
+        Type listType = new TypeToken<Map<String, String>>() {}.getType();
+        return gson.toJson(map, listType);
+    }
+
+    private Map<String, String> jsonToMap(String json){
+        Type listType = new TypeToken<Map<String, String>>() {}.getType();
+        return gson.fromJson(json, listType);
+    }
 	
-	private Map<String, byte[]> getRecoveryMap() throws IOException, ClassNotFoundException {
+	private Map<String, String> getRecoveryMap() throws IOException, ClassNotFoundException {
 		//read recovery file
-		PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
-		ObjectInputStream in = new ObjectInputStream(byte_reader);
-		Map<String, byte[]> recoveryMap = (Map<String, byte[]>) in.readObject();
+        PersistentStorageReader in = super.getReader(RECOVERY_FILENAME);
+		Map<String, String> recoveryMap = jsonToMap(in.readLine());
 		in.close();
-		byte_reader.close();
 		return recoveryMap;
 	}
 	
-	private void writeToRecovery(Map<String, byte[]> recoveryMap) throws IOException {
-		PersistentStorageOutputStream byte_writer = super.getOutputStream(RECOVERY_FILENAME, false);
-		ObjectOutputStream out = new ObjectOutputStream(byte_writer);
-		out.writeObject(recoveryMap);
-		out.close();
-		byte_writer.close();
+	private void writeToRecovery(Map<String, String> recoveryMap) throws IOException {
+		PersistentStorageWriter byte_writer = super.getWriter(RECOVERY_FILENAME, false);
+        String json = mapToJson(recoveryMap);
+        byte_writer.write(json);
+        byte_writer.close();
 	}
 
 	//Add file to log
-	private void writeToLog(String fileName, byte[] bytes){
+	private void writeToLog(String fileName, String json){
 		System.out.println("write " + fileName + " to log");
 		try{
 			//read recovery file
-			Map<String, byte[]> recoveryMap = getRecoveryMap();
+			Map<String, String> recoveryMap = getRecoveryMap();
 
 			//modify recovery file
-			recoveryMap.put(fileName, bytes);
+			recoveryMap.put(fileName, json);
 
 			//write to file
 			writeToRecovery(recoveryMap);
@@ -377,7 +345,7 @@ public class TwitterNode extends RIONode {
 		System.out.println("remove " + fileName + " from log");
 		try{
 			//read recovery file
-			Map<String, byte[]> recoveryMap = getRecoveryMap();
+			Map<String, String> recoveryMap = getRecoveryMap();
 
 			//modify recovery file
 			recoveryMap.remove(fileName);
@@ -388,27 +356,6 @@ public class TwitterNode extends RIONode {
 			System.out.println("ERROR - Could not write recovery file.");
 			e.printStackTrace();
 		}
-	}
-
-	private byte[] serialize(Serializable obj){
-		ByteArrayOutputStream bos = new ByteArrayOutputStream();
-		ObjectOutput output = null;
-		byte[] serialized = null;
-		try{
-			output = new ObjectOutputStream(bos);
-			output.writeObject(obj);
-			serialized = bos.toByteArray();
-		}catch(Exception e){
-
-		}finally {
-			try{
-				output.close();
-				bos.close();
-			}catch(IOException e){
-
-			}
-		}
-		return serialized;
 	}
 
 	public void commandTickCallback(){
@@ -434,6 +381,18 @@ public class TwitterNode extends RIONode {
 		pending_commands.add(command);
 	}
 
+
+    /*
+         Twitter requirements from project 1 write up:
+         Create a user
+         Login/logout as user
+         Post to a twitter stream
+         Add/delete a follower to/from a twitter stream
+         Read all (unread) posts that a user is following
+
+        Server = 0
+		Client = 1
+    */
 	private void onCommand_ordered(String command) {
 		String[] split = command.split("\\s");
 		String operation = split[0];
@@ -443,18 +402,6 @@ public class TwitterNode extends RIONode {
 		}catch(Exception e){
 			//no parameters
 		}
-
-		/*
-        Twitter requirements from project 1 write up:
-        Create a user
-        Login/logout as user
-        Post to a twitter stream
-        Add/delete a follower to/from a twitter stream
-        Read all (unread) posts that a user is following
-		 */
-
-		//Server = 0
-		//Client = 1
 
 		Set<Long> outstandingAcks = new TreeSet<Long>();
 
@@ -823,10 +770,6 @@ public class TwitterNode extends RIONode {
 
 	@Override
 	public String toString() {
-		if (failed) {
-			return "FAILED!!!\n" + super.toString();
-		} else {
-			return super.toString();
-		}
+	    return super.toString();
 	}
 }
