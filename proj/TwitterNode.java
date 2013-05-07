@@ -32,37 +32,48 @@ public class TwitterNode extends RIONode {
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
 
+    private static final String JSON_MSG = "msg";
+    private static final String JSON_REQUEST_ID = "request_id";
+    private static final String JSON_CURRENT_SEQ_NUM = "current_seq_num";
 
-	@Override
+
+
+
+    @Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
-		//msg from server, client executes code
-		if(from == 0) {
-			String response = packetBytesToString(msg);
-			System.out.println("message received by client: " + response);
+        String json = packetBytesToString(msg);
+        Map<String, String> map = jsonToMap(json);
+        String received = map.get(JSON_MSG);
+        String request_id = map.get(JSON_REQUEST_ID);
+        long remote_seq_num = Long.parseLong(map.get(JSON_CURRENT_SEQ_NUM));
 
-			String results = "";
-			long response_seq_num = Long.parseLong(response.split("\\s")[0]);
-			seq_num = Math.max(Long.parseLong(response.split("\\s")[1]), seq_num);
+        seq_num = Math.max(remote_seq_num, seq_num);
+
+        //msg from server, client executes code
+		if(from == 0) {
+
+            System.out.println("message received by client: " + json);
+
 
 			try {
-				results = response.substring(response.split("\\s")[0].length() + response.split("\\s")[1].length() + 2);
+			//	results = message.substring(message.split("\\s")[0].length() + 1);
 			}catch(Exception e){
 				//no results
 			}
 
-			System.out.println("server response: " + results);
-			String command = results.split("\\s")[0];
+			System.out.println("server response: " + received);
+			String command = received.split("\\s")[0];
 			//check to see if more RCP calls need to be sent
 			if(command.equals("read")){
 				//read response
 				//check if it is a read of a '-following' file or '-tweets'
-				String filename = results.split("\\s")[1];
+				String filename = received.split("\\s")[1];
 
 				if(filename.endsWith(FOLLOWERS_FILE_SUFFIX)){
 					//Send more RCP calls to fetch the tweets
 					Set<String> usernames = new HashSet<String>();
-					for(int i = 2; i < results.split("\\s").length; i++){
-						String username = results.split("\\s")[i];
+					for(int i = 2; i < received.split("\\s").length; i++){
+						String username = received.split("\\s")[i];
 						usernames.add(username);
 					}
 					Set<Long> outstandingAcks = rcp_read_multiple(usernames, seq_num);
@@ -72,7 +83,7 @@ public class TwitterNode extends RIONode {
 					updateSeqNum(outstandingAcks);
 				}else if(filename.endsWith(TWEET_FILE_SUFFIX)){
 					//Return tweets to user
-					String all_tweets = results.substring(results.split("\\s")[0].length() + results.split("\\s")[1].length() + 2);
+					String all_tweets = received.substring(received.split("\\s")[0].length() + received.split("\\s")[1].length() + 2);
 					for(int i = 0; i < all_tweets.split("\\n").length; i++){
 						String tweet = all_tweets.split("\\n")[i];
 						if(tweet.length() > 0){
@@ -85,23 +96,18 @@ public class TwitterNode extends RIONode {
 			}
 
 			this.msg = msg;
-			acked.put(response_seq_num, true);
+			acked.put(Long.parseLong(request_id), true);
 		}
 
 
 		//msg from client, server executes code
 		if(from == 1){
-			String message = packetBytesToString(msg);
-			System.out.println("message received by server: " + message);
-			String request_seq_num = message.split("\\s")[0];
-			String command = message.split("\\s")[1];
-			String filename =  message.split("\\s")[2];
-
-			// update the sequence num to the max of the current or the remote seq num
-			seq_num = Math.max(Long.parseLong(request_seq_num), seq_num);
+			System.out.println("message received by server: " + json);
+			String command = received.split("\\s")[0];
+			String filename =  received.split("\\s")[1];
 
 			// start building the response: (request#) (server's current seq num)
-			String response = request_seq_num + " " + seq_num + " ";
+			String response = "";
 
 			PersistentStorageWriter writer = null;
 			PersistentStorageInputStream byte_reader = null;
@@ -132,11 +138,11 @@ public class TwitterNode extends RIONode {
                     Map<String, String> fileMap = jsonToMap(in.readLine());
                     in.close();
 
-					if(!fileMap.containsKey(request_seq_num)){
+					if(!fileMap.containsKey(request_id)){
 						//duplicate request
 						writer = super.getWriter(filename, append);
-						String tweet = message.substring(request_seq_num.length() + command.length() + filename.length() + 3);
-						fileMap.put(request_seq_num, tweet);
+						String tweet = received.substring(command.length() + filename.length() + 2);
+						fileMap.put(request_id, tweet);
 
 						//serialize object
 						String serialized = mapToJson(fileMap);
@@ -146,7 +152,7 @@ public class TwitterNode extends RIONode {
 						writer.write(serialized);
 						removeFromLog(filename);
 					} else {
-						System.out.println("Append not processed, timestamp already exists: " + message);
+						System.out.println("Append not processed, timestamp already exists: " + received);
 					}
 
 					//debug
@@ -185,7 +191,7 @@ public class TwitterNode extends RIONode {
                     Map<String, String> fileMap = jsonToMap(in.readLine());
                     in.close();
 
-					String unfollow_username = message.substring(request_seq_num.length() + command.length() + filename.length() + 3);
+					String unfollow_username = received.substring(command.length() + filename.length() + 2);
 					if(fileMap.values().contains(unfollow_username)){
 						//remove user
 						Set<String> keysToRemove = new HashSet<String>();
@@ -235,8 +241,12 @@ public class TwitterNode extends RIONode {
 				}
 			}
 
-			System.out.println("Server sending response: " + request_seq_num);
-			RIOSend(1, Protocol.TWITTER_PKT, response.getBytes());
+			System.out.println("Server sending response: " + response);
+            Map<String, String> response_map = new TreeMap<String, String>();
+            response_map.put(JSON_MSG, response);
+            response_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
+            response_map.put(JSON_REQUEST_ID, request_id);
+			RIOSend(1, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
 		}
 	}
 
@@ -399,6 +409,7 @@ public class TwitterNode extends RIONode {
 		String parameters = null;
 		try {
 			parameters = command.substring(operation.length() + 1);
+
 		}catch(Exception e){
 			//no parameters
 		}
@@ -481,7 +492,12 @@ public class TwitterNode extends RIONode {
 
 	private void rpc_call(int node, int p, String msg, long seq_num){
 		System.out.println("rcp_call sending message: " + node + " " + seq_num + " " + msg);
-		RIOSend(node, Protocol.TWITTER_PKT, Utility.stringToByteArray(seq_num + " " + msg));
+        Map<String, String> json_map = new TreeMap<String, String>();
+        json_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
+        json_map.put(JSON_MSG, msg);
+        json_map.put(JSON_REQUEST_ID, Long.toString(seq_num));
+        String json = mapToJson(json_map);
+		RIOSend(node, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
 		System.out.println("done sending");
 	}
 
