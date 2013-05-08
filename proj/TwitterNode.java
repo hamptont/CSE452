@@ -72,6 +72,9 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
+    /*
+     * RIOReceive method for server
+     */
 	private void processMessageAsServer(byte[] msg) {
 		String msgJson = packetBytesToString(msg);
 		Map<String, String> msgMap = jsonToMap(msgJson);
@@ -232,6 +235,9 @@ public class TwitterNode extends RIONode {
 		RIOSend(1, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
 	}
 
+    /*
+     *  RIOReceive for client
+     */
 	private void processMessageAsClient(byte[] msg) {		
 		String json = packetBytesToString(msg);
 		Map<String, String> map = jsonToMap(json);
@@ -457,7 +463,7 @@ public class TwitterNode extends RIONode {
 				System.out.println("No username specified. Unable to create account.");
 			} else {
 				outstandingAcks = rcp_create(parameters, seq_num);
-				callback("create_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+				callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
 				commandInProgress++;
 			}
 		} else if(operation.equals("login")) {
