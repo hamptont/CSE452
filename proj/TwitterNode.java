@@ -38,6 +38,9 @@ public class TwitterNode extends RIONode {
     private static final String JSON_CURRENT_SEQ_NUM = "current_seq_num";
     private static final String JSON_TRANSACTION_ID = "tid";
 
+    private static final String COMMAND_START_TRANSACTION = "start_transaction";
+    private static final String COMMAND_COMMIT_TRANSACTION = "commit_transaction";
+
     @Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
         String json = packetBytesToString(msg);
@@ -56,6 +59,8 @@ public class TwitterNode extends RIONode {
 			//check to see if more RCP calls need to be sent
             if(command.equals("transaction_start")){
                 transaction_id = map.get(JSON_TRANSACTION_ID);
+            }else if(command.equals("commit")){
+                transaction_id = "-1";
             }else if(command.equals("read")){
 				//read response
 				//check if it is a read of a '-following' file or '-tweets'
@@ -381,6 +386,8 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
+
+
 	@Override
 	public void onCommand(String command){
 		if(pending_commands.isEmpty()){
@@ -389,7 +396,9 @@ public class TwitterNode extends RIONode {
 		}
 		
 		// queue up the command
+        pending_commands.add(COMMAND_START_TRANSACTION);
 		pending_commands.add(command);
+        pending_commands.add(COMMAND_COMMIT_TRANSACTION);
 	}
 
 
