@@ -52,217 +52,233 @@ public class TwitterNode extends RIONode {
 
     @Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
+    	// extract the sequence num from the message, update this node's seq_num
         String json = packetBytesToString(msg);
         Map<String, String> map = jsonToMap(json);
-        String received = map.get(JSON_MSG);
-        String request_id = map.get(JSON_REQUEST_ID);
         long remote_seq_num = Long.parseLong(map.get(JSON_CURRENT_SEQ_NUM));
 
         seq_num = Math.max(remote_seq_num, seq_num);
 
         //msg from server, client executes code
 		if(from == 0) {
-            System.out.println("message received by client: " + json);
-
-			String command = received.split("\\s")[0];
-			//check to see if more RCP calls need to be sent
-            if(command.equals(RPC_START_TXN)){
-            	// we've received our transaction ID
-                transaction_id = map.get(JSON_TRANSACTION_ID);
-            }else if(command.equals(RPC_COMMIT)){
-            	// we've received the confirmation of a transaction
-                transaction_id = INVALID_TID;
-            }else if(command.equals(RPC_READ)){
-				//read response
-				//check if it is a read of a '-following' file or '-tweets'
-				String filename = received.split("\\s")[1];
-
-				if(filename.endsWith(FOLLOWERS_FILE_SUFFIX)){
-					//Send more RCP calls to fetch the tweets
-					Set<String> usernames = new HashSet<String>();
-					for(int i = 2; i < received.split("\\s").length; i++){
-						String username = received.split("\\s")[i];
-						usernames.add(username);
-					}
-					Set<Long> outstandingAcks = rcp_read_multiple(usernames, seq_num);
-
-					callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{usernames, outstandingAcks});
-					commandInProgress++;
-					updateSeqNum(outstandingAcks);
-				}else if(filename.endsWith(TWEET_FILE_SUFFIX)){
-					//Return tweets to user
-					String all_tweets = received.substring(received.split("\\s")[0].length() + received.split("\\s")[1].length() + 2);
-					for(int i = 0; i < all_tweets.split("\\n").length; i++){
-						String tweet = all_tweets.split("\\n")[i];
-						if(tweet.length() > 0){
-							String id = tweet.split("\\s")[0];
-							String tweet_content = tweet.substring(tweet.split("\\s")[0].length() + 1);
-							tweets.put(id, tweet_content);
-						}
-					}
-				}
-			}
-
-			this.msg = msg;
-			acked.put(Long.parseLong(request_id), true);
+            processMessageAsClient(msg);
 		}
-
 
 		//msg from client, server executes code
 		if(from == 1){
-			System.out.println("message received by server: " + json);
-			String command = received.split("\\s")[0];
-            String filename = "";
-            try{
-                //All requests should have a filename except transactions
-			    filename =  received.split("\\s")[1];
-            }catch(Exception e){
-
-            }
-
-			String response = "";
-			
-			// populate the response we will send
-            Map<String, String> response_map = new TreeMap<String, String>();
-            response_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
-            response_map.put(JSON_REQUEST_ID, request_id);
-            response_map.put(JSON_TRANSACTION_ID, map.get(JSON_TRANSACTION_ID));
-
-            PersistentStorageWriter writer = null;
-			PersistentStorageInputStream byte_reader = null;
-
-			// execute the requested command
-            if(command.equals(RPC_START_TXN)){
-                //request to start a transaction
-                response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
-                response += RPC_START_TXN;
-            }else if(command.equals(RPC_CREATE)) {
-                response += "okay";
-                try{
-                    boolean append = false;
-                    writer = super.getWriter(filename, append);
-                    TreeMap<String, String> fileMap = new TreeMap<String, String>();
-                    writer.write(mapToJson(fileMap));
-
-                }catch(Exception e){
-                    e.printStackTrace();
-                }
-
-			} else if(command.equals(RPC_APPEND)) {
-				try{
-					boolean append = false;
-                    PersistentStorageReader in = super.getReader(filename);
-                    Map<String, String> fileMap = jsonToMap(in.readLine());
-                    in.close();
-
-					if(!fileMap.containsKey(request_id)){
-						//duplicate request
-						writer = super.getWriter(filename, append);
-						String tweet = received.substring(command.length() + filename.length() + 2);
-						fileMap.put(request_id, tweet);
-
-						//serialize object to json
-						String serialized = mapToJson(fileMap);
-
-                        System.out.println("writing to file");
-                        writeToLog(filename, serialized);
-						writer.write(serialized);
-						removeFromLog(filename);
-					} else {
-						System.out.println("Append not processed, timestamp already exists: " + received);
-					}
-
-					//debug
-					System.out.println("MAP VALUES (append): ");
-					System.out.println(fileMap.values());
-				}catch(Exception e){
-					System.out.println();
-					e.printStackTrace();
-				}
-				response += "okay";
-			} else if(command.equals(RPC_READ)) {
-				try{
-					response += RPC_READ + " " + filename + " ";
-                    PersistentStorageReader in = super.getReader(filename);
-                    Map<String, String> fileMap = jsonToMap(in.readLine());
-                    in.close();
-
-					String username = filename.split("-")[0];
-					for(String s : fileMap.keySet()){
-						//return values -- username of people you are following
-						response += s + username + " " + fileMap.get(s) + "\n";
-					}
-					response = response.trim();
-				}catch(Exception e){
-
-				}
-			} else if(command.equals(RPC_DELETE)){
-				//Removing followers from "-followers" file
-				//If user is not currently being followed -- does nothing
-				//If user is being followed multiple times -- removes all ocurences
-				try{
-					//read in treemap from file
-
-                    PersistentStorageReader in = super.getReader(filename);
-                    Map<String, String> fileMap = jsonToMap(in.readLine());
-                    in.close();
-
-					String unfollow_username = received.substring(command.length() + filename.length() + 2);
-					if(fileMap.values().contains(unfollow_username)){
-						//remove user
-						Set<String> keysToRemove = new HashSet<String>();
-						for (Map.Entry<String,String> entry : fileMap.entrySet()) {
-							String key = entry.getKey();
-							String value = entry.getValue();
-							if(value.equals(unfollow_username)){
-								keysToRemove.add(key);
-							}
-						}
-
-						//Can't modify map while iterating -- make modifications after
-						for(String key : keysToRemove){
-							fileMap.remove(key);
-						}
-
-						//serialize object
-						String serialized = mapToJson(fileMap);
-						writeToLog(filename, serialized);
-						System.out.println("writing to file");
-						writer.write(serialized);
-						removeFromLog(filename);
-					}
-
-					//debug
-					System.out.println("MAP VALUES (remove): ");
-					System.out.println(fileMap.values());
-				}catch(Exception e){
-					e.printStackTrace();
-				}
-				response += "okay";
-			}else{
-				response += "unknown command: " + command;
-			}
-            
-            // close any oper readers/writers
-			if(writer != null){
-				try{
-					writer.close();
-				}catch(Exception e){
-
-				}
-			}
-			if(byte_reader != null){
-				try{
-					byte_reader.close();
-				}catch(Exception e){
-
-				}
-			}
-
-			System.out.println("Server sending response: " + response);
-            response_map.put(JSON_MSG, response);
-			RIOSend(1, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
+			processMessageAsServer(msg);
 		}
+	}
+    
+	private void processMessageAsServer(byte[] msg) {
+		String msgJson = packetBytesToString(msg);
+        Map<String, String> msgMap = jsonToMap(msgJson);
+        String received = msgMap.get(JSON_MSG);
+        String request_id = msgMap.get(JSON_REQUEST_ID);
+		
+		System.out.println("message received by server: " + msgJson);
+		String command = received.split("\\s")[0];
+		String filename = "";
+		try{
+		    //All requests should have a filename except transactions
+		    filename =  received.split("\\s")[1];
+		}catch(Exception e){
+
+		}
+
+		String response = "";
+		
+		// populate the response we will send
+		Map<String, String> response_map = new TreeMap<String, String>();
+		response_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
+		response_map.put(JSON_REQUEST_ID, request_id);
+		response_map.put(JSON_TRANSACTION_ID, msgMap.get(JSON_TRANSACTION_ID));
+
+		PersistentStorageWriter writer = null;
+		PersistentStorageInputStream byte_reader = null;
+
+		// execute the requested command
+		if(command.equals(RPC_START_TXN)){
+		    //request to start a transaction
+		    response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
+		    response += RPC_START_TXN;
+		}else if(command.equals(RPC_CREATE)) {
+		    response += "okay";
+		    try{
+		        boolean append = false;
+		        writer = super.getWriter(filename, append);
+		        TreeMap<String, String> fileMap = new TreeMap<String, String>();
+		        writer.write(mapToJson(fileMap));
+
+		    }catch(Exception e){
+		        e.printStackTrace();
+		    }
+
+		} else if(command.equals(RPC_APPEND)) {
+			try{
+				boolean append = false;
+		        PersistentStorageReader in = super.getReader(filename);
+		        Map<String, String> fileMap = jsonToMap(in.readLine());
+		        in.close();
+
+				if(!fileMap.containsKey(request_id)){
+					//duplicate request
+					writer = super.getWriter(filename, append);
+					String tweet = received.substring(command.length() + filename.length() + 2);
+					fileMap.put(request_id, tweet);
+
+					//serialize object to json
+					String serialized = mapToJson(fileMap);
+
+		            System.out.println("writing to file");
+		            writeToLog(filename, serialized);
+					writer.write(serialized);
+					removeFromLog(filename);
+				} else {
+					System.out.println("Append not processed, timestamp already exists: " + received);
+				}
+
+				//debug
+				System.out.println("MAP VALUES (append): ");
+				System.out.println(fileMap.values());
+			}catch(Exception e){
+				System.out.println();
+				e.printStackTrace();
+			}
+			response += "okay";
+		} else if(command.equals(RPC_READ)) {
+			try{
+				response += RPC_READ + " " + filename + " ";
+		        PersistentStorageReader in = super.getReader(filename);
+		        Map<String, String> fileMap = jsonToMap(in.readLine());
+		        in.close();
+
+				String username = filename.split("-")[0];
+				for(String s : fileMap.keySet()){
+					//return values -- username of people you are following
+					response += s + username + " " + fileMap.get(s) + "\n";
+				}
+				response = response.trim();
+			}catch(Exception e){
+
+			}
+		} else if(command.equals(RPC_DELETE)){
+			//Removing followers from "-followers" file
+			//If user is not currently being followed -- does nothing
+			//If user is being followed multiple times -- removes all ocurences
+			try{
+				//read in treemap from file
+
+		        PersistentStorageReader in = super.getReader(filename);
+		        Map<String, String> fileMap = jsonToMap(in.readLine());
+		        in.close();
+
+				String unfollow_username = received.substring(command.length() + filename.length() + 2);
+				if(fileMap.values().contains(unfollow_username)){
+					//remove user
+					Set<String> keysToRemove = new HashSet<String>();
+					for (Map.Entry<String,String> entry : fileMap.entrySet()) {
+						String key = entry.getKey();
+						String value = entry.getValue();
+						if(value.equals(unfollow_username)){
+							keysToRemove.add(key);
+						}
+					}
+
+					//Can't modify map while iterating -- make modifications after
+					for(String key : keysToRemove){
+						fileMap.remove(key);
+					}
+
+					//serialize object
+					String serialized = mapToJson(fileMap);
+					writeToLog(filename, serialized);
+					System.out.println("writing to file");
+					writer.write(serialized);
+					removeFromLog(filename);
+				}
+
+				//debug
+				System.out.println("MAP VALUES (remove): ");
+				System.out.println(fileMap.values());
+			}catch(Exception e){
+				e.printStackTrace();
+			}
+			response += "okay";
+		}else{
+			response += "unknown command: " + command;
+		}
+		
+		// close any oper readers/writers
+		if(writer != null){
+			try{
+				writer.close();
+			}catch(Exception e){
+
+			}
+		}
+		if(byte_reader != null){
+			try{
+				byte_reader.close();
+			}catch(Exception e){
+
+			}
+		}
+
+		System.out.println("Server sending response: " + response);
+		response_map.put(JSON_MSG, response);
+		RIOSend(1, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
+	}
+    
+	private void processMessageAsClient(byte[] msg) {		
+		String json = packetBytesToString(msg);
+        Map<String, String> map = jsonToMap(json);
+        String received = map.get(JSON_MSG);
+        String request_id = map.get(JSON_REQUEST_ID);
+        
+        System.out.println("message received by client: " + json);
+
+		String command = received.split("\\s")[0];
+		//check to see if more RCP calls need to be sent
+		if(command.equals(RPC_START_TXN)){
+			// we've received our transaction ID
+		    transaction_id = map.get(JSON_TRANSACTION_ID);
+		}else if(command.equals(RPC_COMMIT)){
+			// we've received the confirmation of a transaction
+		    transaction_id = INVALID_TID;
+		}else if(command.equals(RPC_READ)){
+			//read response
+			//check if it is a read of a '-following' file or '-tweets'
+			String filename = received.split("\\s")[1];
+
+			if(filename.endsWith(FOLLOWERS_FILE_SUFFIX)){
+				//Send more RCP calls to fetch the tweets
+				Set<String> usernames = new HashSet<String>();
+				for(int i = 2; i < received.split("\\s").length; i++){
+					String username = received.split("\\s")[i];
+					usernames.add(username);
+				}
+				Set<Long> outstandingAcks = rcp_read_multiple(usernames, seq_num);
+
+				callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{usernames, outstandingAcks});
+				commandInProgress++;
+				updateSeqNum(outstandingAcks);
+			}else if(filename.endsWith(TWEET_FILE_SUFFIX)){
+				//Return tweets to user
+				String all_tweets = received.substring(received.split("\\s")[0].length() + received.split("\\s")[1].length() + 2);
+				for(int i = 0; i < all_tweets.split("\\n").length; i++){
+					String tweet = all_tweets.split("\\n")[i];
+					if(tweet.length() > 0){
+						String id = tweet.split("\\s")[0];
+						String tweet_content = tweet.substring(tweet.split("\\s")[0].length() + 1);
+						tweets.put(id, tweet_content);
+					}
+				}
+			}
+		}
+		
+		this.msg = msg;
+		acked.put(Long.parseLong(request_id), true);
 	}
 
 	private void updateSeqNum(Set<Long> outstandingAcks){
