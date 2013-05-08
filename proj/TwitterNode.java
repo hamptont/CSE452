@@ -8,6 +8,7 @@ import edu.washington.cs.cse490h.lib.*;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.util.*;
+import java.util.Map.Entry;
 
 public class TwitterNode extends RIONode {
 	public static double getFailureRate() { return 0/100.0; }
@@ -25,43 +26,44 @@ public class TwitterNode extends RIONode {
 	private String username;
 	private Map<String, String> tweets;
 
-    private Gson gson;
-    private String transaction_id;
+	private Gson gson;
+	private String transaction_id;
 
-    private static final String TWEET_FILE_SUFFIX = "-tweets";
+	private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
 
-    private static final String JSON_MSG = "msg";
-    private static final String JSON_REQUEST_ID = "request_id";
-    private static final String JSON_CURRENT_SEQ_NUM = "current_seq_num";
-    private static final String JSON_TRANSACTION_ID = "tid";
+	private static final String JSON_MSG = "msg";
+	private static final String JSON_REQUEST_ID = "request_id";
+	private static final String JSON_CURRENT_SEQ_NUM = "current_seq_num";
+	private static final String JSON_TRANSACTION_ID = "tid";
 
-    private static final String COMMAND_START_TRANSACTION = "start_transaction";
-    private static final String COMMAND_COMMIT_TRANSACTION = "commit_transaction";
-    
-    private static final String INVALID_TID = "-1";
-    
-    private static final String RPC_START_TXN = "start_transaction";
-    private static final String RPC_COMMIT = "commit";
-    private static final String RPC_READ = "read";
-    private static final String RPC_APPEND = "append";
-    private static final String RPC_DELETE = "delete";
-    private static final String RPC_CREATE = "create";
+	private static final String COMMAND_START_TRANSACTION = "start_transaction";
+	private static final String COMMAND_COMMIT_TRANSACTION = "commit_transaction";
 
-    @Override
+	private static final String INVALID_TID = "-1";
+
+	private static final String RPC_START_TXN = "start_transaction";
+	private static final String RPC_COMMIT = "commit";
+	private static final String RPC_READ = "read";
+	private static final String RPC_APPEND = "append";
+	private static final String RPC_DELETE = "delete";
+	private static final String RPC_CREATE = "create";
+
+	@Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
-    	// extract the sequence num from the message, update this node's seq_num
-        String json = packetBytesToString(msg);
-        Map<String, String> map = jsonToMap(json);
-        long remote_seq_num = Long.parseLong(map.get(JSON_CURRENT_SEQ_NUM));
+		// extract the sequence num from the message, update this node's seq_num
+		String json = packetBytesToString(msg);
+		Map<String, String> map = jsonToMap(json);
+		long remote_seq_num = Long.parseLong(map.get(JSON_CURRENT_SEQ_NUM));
 
-        seq_num = Math.max(remote_seq_num, seq_num);
+		// update the sequence number to be larger than any seen previously
+		seq_num = Math.max(remote_seq_num, seq_num) + 1;
 
-        //msg from server, client executes code
+		//msg from server, client executes code
 		if(from == 0) {
-            processMessageAsClient(msg);
+			processMessageAsClient(msg);
 		}
 
 		//msg from client, server executes code
@@ -69,25 +71,25 @@ public class TwitterNode extends RIONode {
 			processMessageAsServer(msg);
 		}
 	}
-    
+
 	private void processMessageAsServer(byte[] msg) {
 		String msgJson = packetBytesToString(msg);
-        Map<String, String> msgMap = jsonToMap(msgJson);
-        String received = msgMap.get(JSON_MSG);
-        String request_id = msgMap.get(JSON_REQUEST_ID);
-		
+		Map<String, String> msgMap = jsonToMap(msgJson);
+		String received = msgMap.get(JSON_MSG);
+		String request_id = msgMap.get(JSON_REQUEST_ID);
+
 		System.out.println("message received by server: " + msgJson);
 		String command = received.split("\\s")[0];
 		String filename = "";
 		try{
-		    //All requests should have a filename except transactions
-		    filename =  received.split("\\s")[1];
+			//All requests should have a filename except transactions
+			filename =  received.split("\\s")[1];
 		}catch(Exception e){
 
 		}
 
 		String response = "";
-		
+
 		// populate the response we will send
 		Map<String, String> response_map = new TreeMap<String, String>();
 		response_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
@@ -99,27 +101,27 @@ public class TwitterNode extends RIONode {
 
 		// execute the requested command
 		if(command.equals(RPC_START_TXN)){
-		    //request to start a transaction
-		    response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
-		    response += RPC_START_TXN;
+			//request to start a transaction
+			response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
+			response += RPC_START_TXN;
 		}else if(command.equals(RPC_CREATE)) {
-		    response += "okay";
-		    try{
-		        boolean append = false;
-		        writer = super.getWriter(filename, append);
-		        TreeMap<String, String> fileMap = new TreeMap<String, String>();
-		        writer.write(mapToJson(fileMap));
+			response += "okay";
+			try{
+				boolean append = false;
+				writer = super.getWriter(filename, append);
+				TreeMap<String, String> fileMap = new TreeMap<String, String>();
+				writer.write(mapToJson(fileMap));
 
-		    }catch(Exception e){
-		        e.printStackTrace();
-		    }
+			}catch(Exception e){
+				e.printStackTrace();
+			}
 
 		} else if(command.equals(RPC_APPEND)) {
 			try{
 				boolean append = false;
-		        PersistentStorageReader in = super.getReader(filename);
-		        Map<String, String> fileMap = jsonToMap(in.readLine());
-		        in.close();
+				PersistentStorageReader in = super.getReader(filename);
+				Map<String, String> fileMap = jsonToMap(in.readLine());
+				in.close();
 
 				if(!fileMap.containsKey(request_id)){
 					//duplicate request
@@ -130,8 +132,8 @@ public class TwitterNode extends RIONode {
 					//serialize object to json
 					String serialized = mapToJson(fileMap);
 
-		            System.out.println("writing to file");
-		            writeToLog(filename, serialized);
+					System.out.println("writing to file");
+					addToLog(filename, serialized);
 					writer.write(serialized);
 					removeFromLog(filename);
 				} else {
@@ -149,9 +151,9 @@ public class TwitterNode extends RIONode {
 		} else if(command.equals(RPC_READ)) {
 			try{
 				response += RPC_READ + " " + filename + " ";
-		        PersistentStorageReader in = super.getReader(filename);
-		        Map<String, String> fileMap = jsonToMap(in.readLine());
-		        in.close();
+				PersistentStorageReader in = super.getReader(filename);
+				Map<String, String> fileMap = jsonToMap(in.readLine());
+				in.close();
 
 				String username = filename.split("-")[0];
 				for(String s : fileMap.keySet()){
@@ -169,9 +171,9 @@ public class TwitterNode extends RIONode {
 			try{
 				//read in treemap from file
 
-		        PersistentStorageReader in = super.getReader(filename);
-		        Map<String, String> fileMap = jsonToMap(in.readLine());
-		        in.close();
+				PersistentStorageReader in = super.getReader(filename);
+				Map<String, String> fileMap = jsonToMap(in.readLine());
+				in.close();
 
 				String unfollow_username = received.substring(command.length() + filename.length() + 2);
 				if(fileMap.values().contains(unfollow_username)){
@@ -192,7 +194,7 @@ public class TwitterNode extends RIONode {
 
 					//serialize object
 					String serialized = mapToJson(fileMap);
-					writeToLog(filename, serialized);
+					addToLog(filename, serialized);
 					System.out.println("writing to file");
 					writer.write(serialized);
 					removeFromLog(filename);
@@ -208,7 +210,7 @@ public class TwitterNode extends RIONode {
 		}else{
 			response += "unknown command: " + command;
 		}
-		
+
 		// close any oper readers/writers
 		if(writer != null){
 			try{
@@ -229,23 +231,23 @@ public class TwitterNode extends RIONode {
 		response_map.put(JSON_MSG, response);
 		RIOSend(1, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
 	}
-    
+
 	private void processMessageAsClient(byte[] msg) {		
 		String json = packetBytesToString(msg);
-        Map<String, String> map = jsonToMap(json);
-        String received = map.get(JSON_MSG);
-        String request_id = map.get(JSON_REQUEST_ID);
-        
-        System.out.println("message received by client: " + json);
+		Map<String, String> map = jsonToMap(json);
+		String received = map.get(JSON_MSG);
+		String request_id = map.get(JSON_REQUEST_ID);
+
+		System.out.println("message received by client: " + json);
 
 		String command = received.split("\\s")[0];
 		//check to see if more RCP calls need to be sent
 		if(command.equals(RPC_START_TXN)){
 			// we've received our transaction ID
-		    transaction_id = map.get(JSON_TRANSACTION_ID);
+			transaction_id = map.get(JSON_TRANSACTION_ID);
 		}else if(command.equals(RPC_COMMIT)){
 			// we've received the confirmation of a transaction
-		    transaction_id = INVALID_TID;
+			transaction_id = INVALID_TID;
 		}else if(command.equals(RPC_READ)){
 			//read response
 			//check if it is a read of a '-following' file or '-tweets'
@@ -276,18 +278,9 @@ public class TwitterNode extends RIONode {
 				}
 			}
 		}
-		
+
 		this.msg = msg;
 		acked.put(Long.parseLong(request_id), true);
-	}
-
-	private void updateSeqNum(Set<Long> outstandingAcks){
-		//Find the max of the outstanding acks sent
-		for(Long val : outstandingAcks){
-			seq_num = Math.max(seq_num, val);
-		}
-		//Next unused sequence number
-		seq_num++;
 	}
 
 	@Override
@@ -297,75 +290,87 @@ public class TwitterNode extends RIONode {
 		// Generate a user-level synoptic event to indicate that the node started.
 		logSynopticEvent("started");
 
-		//outstanding_ack = new HashSet<Long>();
+		// initialize local variables
 		acked = new HashMap<Long, Boolean>();
 		seq_num = System.currentTimeMillis();
 		tweets = new HashMap<String, String>();
 		pending_commands = new LinkedList<String>();
 		commandInProgress = 0;
-        gson = new Gson();
-        transaction_id = INVALID_TID;
+		gson = new Gson();
+		transaction_id = INVALID_TID;
 
-        readRecoveryFileAndApplyChanges();
+		// finish writing files, if necessary
+		readRecoveryFileAndApplyChanges();
 
-		//Write empty temp file
+		// Write empty temp file
 		try{
 			writeToRecovery(new TreeMap<String,  String>());
 		}catch(IOException e){
+
+		}
+	}
+	
+	
+	/*
+	 * File manipulation methods
+	 */
+	
+
+	//Read recovery file and write modifications
+	private void readRecoveryFileAndApplyChanges() {		
+		try {
+			Map<String, String> recoveryMap = getRecoveryMap();
 			
+			for(Entry<String, String> file : recoveryMap.entrySet()) {
+				writeFile(file.getKey(), file.getValue());
+			}			
+		} catch (Exception e) {
+			System.out.println("Unable to recover from log");
+			e.printStackTrace();
 		}
 	}
 
-    private void readRecoveryFileAndApplyChanges(){
-        //Read recovery file and write modifications
-        boolean append = false;
-        try{
-            PersistentStorageInputStream byte_reader = super.getInputStream(RECOVERY_FILENAME);
-            ObjectInputStream in = new ObjectInputStream(byte_reader);
-            TreeMap<String,String> recoveryMap = (TreeMap<String, String>) in.readObject();
-            in.close();
-            for(String fileName : recoveryMap.keySet()){
-                //write to file
-                System.out.println("Recovering from temp file: " + fileName);
-                String fileBackup = recoveryMap.get(fileName);
-                PersistentStorageWriter byte_writer = super.getWriter(fileName, append);
-                byte_writer.write(fileBackup);
-                byte_writer.close();
-            }
-            byte_reader.close();
-            in.close();
-        }catch(Exception e){
-
-        }
-    }
-
-    private String mapToJson(Map<String, String> map) {
-        Type listType = new TypeToken<Map<String, String>>() {}.getType();
-        return gson.toJson(map, listType);
-    }
-
-    private Map<String, String> jsonToMap(String json){
-        Type listType = new TypeToken<Map<String, String>>() {}.getType();
-        return gson.fromJson(json, listType);
-    }
+	// write the json-encoded string of contents to the specified file
+	private void writeFile(String filename, String contents) throws IOException {
+		PersistentStorageWriter byte_writer = super.getWriter(filename, false);
+		byte_writer.write(contents);
+		byte_writer.close();
+	}
 	
+	// write the map to the specified file
+	private void writeFile(String filename, Map<String, String> contents) throws IOException {
+		String jsonMap = mapToJson(contents);
+		writeFile(filename, jsonMap);
+	}
+
+	// turns the Map into the equivalent json
+	private String mapToJson(Map<String, String> map) {
+		Type listType = new TypeToken<Map<String, String>>() {}.getType();
+		return gson.toJson(map, listType);
+	}
+
+	// turns the json into a Map
+	private Map<String, String> jsonToMap(String json){
+		Type listType = new TypeToken<Map<String, String>>() {}.getType();
+		return gson.fromJson(json, listType);
+	}
+
+	// return the contents of the recovery file as a map (filename -> json-encoded contents)
 	private Map<String, String> getRecoveryMap() throws IOException, ClassNotFoundException {
 		//read recovery file
-        PersistentStorageReader in = super.getReader(RECOVERY_FILENAME);
+		PersistentStorageReader in = super.getReader(RECOVERY_FILENAME);
 		Map<String, String> recoveryMap = jsonToMap(in.readLine());
 		in.close();
 		return recoveryMap;
 	}
-	
+
+	// write the map (filename to json-encoded contents) to the recovery file
 	private void writeToRecovery(Map<String, String> recoveryMap) throws IOException {
-		PersistentStorageWriter byte_writer = super.getWriter(RECOVERY_FILENAME, false);
-        String json = mapToJson(recoveryMap);
-        byte_writer.write(json);
-        byte_writer.close();
+		writeFile(RECOVERY_FILENAME, recoveryMap);
 	}
 
 	//Add file to log
-	private void writeToLog(String fileName, String json){
+	private void addToLog(String fileName, String json){
 		System.out.println("write " + fileName + " to log");
 		try{
 			//read recovery file
@@ -399,23 +404,12 @@ public class TwitterNode extends RIONode {
 			e.printStackTrace();
 		}
 	}
-
-	public void commandTickCallback(){
-		if(commandInProgress == 0 && !pending_commands.isEmpty()){
-            if(transaction_id.equals("-1")){
-                startTransaction();
-            }else{
-                String command = pending_commands.remove();
-                System.out.println("executing command: " + command);
-                onCommand_ordered(command);
-            }
-		}
-
-		if(!pending_commands.isEmpty()) {
-			callback("commandTickCallback", new String[0], new Object[0]);
-		}
-	}
-
+	
+	
+	/*
+	 * COMMAND METHODS
+	 * methods used to accept commands from the simulator
+	 */
 
 
 	@Override
@@ -424,16 +418,16 @@ public class TwitterNode extends RIONode {
 			// start a command tick if necessary
 			callback("commandTickCallback", new String[0], new Object[0]);
 		}
-		
+
 		// queue up the command
 		//TODO move these around? how do we handle abors by the server?
-        pending_commands.add(COMMAND_START_TRANSACTION);
+		pending_commands.add(COMMAND_START_TRANSACTION);
 		pending_commands.add(command);
-        pending_commands.add(COMMAND_COMMIT_TRANSACTION);
+		pending_commands.add(COMMAND_COMMIT_TRANSACTION);
 	}
 
 
-    /*
+	/*
          Twitter requirements from project 1 write up:
          Create a user
          Login/logout as user
@@ -443,7 +437,7 @@ public class TwitterNode extends RIONode {
 
         Server = 0
 		Client = 1
-    */
+	 */
 	private void onCommand_ordered(String command) {
 		String[] split = command.split("\\s");
 		String operation = split[0];
@@ -530,25 +524,32 @@ public class TwitterNode extends RIONode {
 		}
 		updateSeqNum(outstandingAcks);
 	}
+	
+	
+	/*
+	 * RPC CALLS
+	 * methods used to send RPCs to the server
+	 */
+	
 
-    private void startTransaction(){
-        Set<Long> outstandingAcks = new TreeSet<Long>();
-        outstandingAcks = rcp_transaction(seq_num);
-        callback("transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
-        commandInProgress++;
+	private void startTransaction(){
+		Set<Long> outstandingAcks = new TreeSet<Long>();
+		outstandingAcks = rcp_transaction(seq_num);
+		callback("transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+		commandInProgress++;
 
-        updateSeqNum(outstandingAcks);
-    }
+		updateSeqNum(outstandingAcks);
+	}
 
 	private void rpc_call(int node, int p, String msg, long seq_num){
 		System.out.println("rcp_call sending message: " + node + " " + seq_num + " " + msg);
-        Map<String, String> json_map = new TreeMap<String, String>();
-        json_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
-        json_map.put(JSON_MSG, msg);
-        json_map.put(JSON_REQUEST_ID, Long.toString(seq_num));
-        json_map.put(JSON_TRANSACTION_ID, transaction_id);
+		Map<String, String> json_map = new TreeMap<String, String>();
+		json_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
+		json_map.put(JSON_MSG, msg);
+		json_map.put(JSON_REQUEST_ID, Long.toString(seq_num));
+		json_map.put(JSON_TRANSACTION_ID, transaction_id);
 
-        String json = mapToJson(json_map);
+		String json = mapToJson(json_map);
 		RIOSend(node, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
 		System.out.println("done sending");
 	}
@@ -637,14 +638,37 @@ public class TwitterNode extends RIONode {
 		return returned;
 	}
 
-    private Set<Long> rcp_transaction(long seq_num){
-        Set<Long> returned = new TreeSet<Long>();
-        rpc_call(0, Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
-        acked.put(seq_num, false);
-        returned.add(seq_num);
-        return returned;
-    }
+	private Set<Long> rcp_transaction(long seq_num){
+		Set<Long> returned = new TreeSet<Long>();
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
+		acked.put(seq_num, false);
+		returned.add(seq_num);
+		return returned;
+	}
+	
+	
+	/*
+	 * CALLBACKS
+	 * 
+	 * Used to achieve asynchronous operation demanded by the simulator
+	 */
+	
+	
+	public void commandTickCallback(){
+		if(commandInProgress == 0 && !pending_commands.isEmpty()){
+			if(transaction_id.equals("-1")){
+				startTransaction();
+			}else{
+				String command = pending_commands.remove();
+				System.out.println("executing command: " + command);
+				onCommand_ordered(command);
+			}
+		}
 
+		if(!pending_commands.isEmpty()) {
+			callback("commandTickCallback", new String[0], new Object[0]);
+		}
+	}
 
 	public void login_callback(String parameters, Set<Long> outstandingAcks) {
 		System.out.println("login_callback called: " + parameters);
@@ -768,8 +792,8 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
-	public void create_callback(String parameters, Set<Long> outstandingAcks) {
-		System.out.println("create_callback called: " + parameters);
+	public void create_account_callback(String parameters, Set<Long> outstandingAcks) {
+		System.out.println("create_account_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
 
 		if(all_acked) {
@@ -778,8 +802,8 @@ public class TwitterNode extends RIONode {
 			}
 			String response = packetBytesToString(this.msg);
 
-            System.out.println("Account created!");
-            System.out.println("response: " + response);
+			System.out.println("Account created!");
+			System.out.println("response: " + response);
 
 			commandInProgress--;
 		} else {
@@ -788,29 +812,37 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_create(parameters, min_ack);
-			callback("create_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+			callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
 		}
 	}
 
-    public void transaction_callback(Set<Long> outstandingAcks) {
-        System.out.println("transaction callback called");
+	public void transaction_callback(Set<Long> outstandingAcks) {
+		System.out.println("transaction callback called");
 
-        boolean all_acked = allAcked(outstandingAcks);
-        if(all_acked) {
-            for(Long ack : outstandingAcks) {
-                acked.remove(ack);
-            }
-            commandInProgress--;
-        } else {
-            long min_ack = Long.MAX_VALUE;
-            for(Long num : outstandingAcks){
-                min_ack = Math.min(num, min_ack);
-            }
-            rcp_transaction(min_ack);
-            callback("transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
-        }
-    }
+		boolean all_acked = allAcked(outstandingAcks);
+		if(all_acked) {
+			for(Long ack : outstandingAcks) {
+				acked.remove(ack);
+			}
+			commandInProgress--;
+		} else {
+			long min_ack = Long.MAX_VALUE;
+			for(Long num : outstandingAcks){
+				min_ack = Math.min(num, min_ack);
+			}
+			rcp_transaction(min_ack);
+			callback("transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+		}
+	}	
+	
+	/*
+	 * ASSORED HELPER FUNCTIONS
+	 */
 
+	/*
+	 * returns true if all longs in outstandingAcks are
+	 * present in acked with the value 'true'
+	 */
 	private boolean allAcked(Set<Long> outstandingAcks) {
 		boolean all_acked = true;
 		for(Long i : outstandingAcks) {
@@ -823,6 +855,18 @@ public class TwitterNode extends RIONode {
 			System.out.println("ALL MESSAGES ACKED!");
 		}
 		return all_acked;
+	}
+	
+	/*
+	 * makes seq_num the max of seq_num and all of outstandingAcks, +1
+	 */
+	private void updateSeqNum(Set<Long> outstandingAcks){
+		//Find the max of the outstanding acks sent
+		for(Long val : outstandingAcks){
+			seq_num = Math.max(seq_num, val);
+		}
+		//Next unused sequence number
+		seq_num++;
 	}
 
 	@Override
@@ -848,6 +892,6 @@ public class TwitterNode extends RIONode {
 
 	@Override
 	public String toString() {
-	    return super.toString();
+		return super.toString();
 	}
 }
