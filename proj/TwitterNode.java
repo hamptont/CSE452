@@ -40,6 +40,15 @@ public class TwitterNode extends RIONode {
 
     private static final String COMMAND_START_TRANSACTION = "start_transaction";
     private static final String COMMAND_COMMIT_TRANSACTION = "commit_transaction";
+    
+    private static final String INVALID_TID = "-1";
+    
+    private static final String RPC_START_TXN = "start_transaction";
+    private static final String RPC_COMMIT = "commit";
+    private static final String RPC_READ = "read";
+    private static final String RPC_APPEND = "append";
+    private static final String RPC_DELETE = "delete";
+    private static final String RPC_CREATE = "create";
 
     @Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
@@ -57,11 +66,13 @@ public class TwitterNode extends RIONode {
 
 			String command = received.split("\\s")[0];
 			//check to see if more RCP calls need to be sent
-            if(command.equals("transaction_start")){
+            if(command.equals(RPC_START_TXN)){
+            	// we've received our transaction ID
                 transaction_id = map.get(JSON_TRANSACTION_ID);
-            }else if(command.equals("commit")){
-                transaction_id = "-1";
-            }else if(command.equals("read")){
+            }else if(command.equals(RPC_COMMIT)){
+            	// we've received the confirmation of a transaction
+                transaction_id = INVALID_TID;
+            }else if(command.equals(RPC_READ)){
 				//read response
 				//check if it is a read of a '-following' file or '-tweets'
 				String filename = received.split("\\s")[1];
@@ -110,6 +121,8 @@ public class TwitterNode extends RIONode {
             }
 
 			String response = "";
+			
+			// populate the response we will send
             Map<String, String> response_map = new TreeMap<String, String>();
             response_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
             response_map.put(JSON_REQUEST_ID, request_id);
@@ -119,11 +132,11 @@ public class TwitterNode extends RIONode {
 			PersistentStorageInputStream byte_reader = null;
 
 			// execute the requested command
-            if(command.equals("transaction")){
+            if(command.equals(RPC_START_TXN)){
                 //request to start a transaction
                 response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
-                response += "transaction_start";
-            }else if(command.equals("create")) {
+                response += RPC_START_TXN;
+            }else if(command.equals(RPC_CREATE)) {
                 response += "okay";
                 try{
                     boolean append = false;
@@ -135,7 +148,7 @@ public class TwitterNode extends RIONode {
                     e.printStackTrace();
                 }
 
-			} else if(command.equals("append")) {
+			} else if(command.equals(RPC_APPEND)) {
 				try{
 					boolean append = false;
                     PersistentStorageReader in = super.getReader(filename);
@@ -167,9 +180,9 @@ public class TwitterNode extends RIONode {
 					e.printStackTrace();
 				}
 				response += "okay";
-			} else if(command.equals("read")) {
+			} else if(command.equals(RPC_READ)) {
 				try{
-					response += "read " + filename + " ";
+					response += RPC_READ + " " + filename + " ";
                     PersistentStorageReader in = super.getReader(filename);
                     Map<String, String> fileMap = jsonToMap(in.readLine());
                     in.close();
@@ -183,13 +196,12 @@ public class TwitterNode extends RIONode {
 				}catch(Exception e){
 
 				}
-			} else if(command.equals("delete")){
+			} else if(command.equals(RPC_DELETE)){
 				//Removing followers from "-followers" file
 				//If user is not currently being followed -- does nothing
 				//If user is being followed multiple times -- removes all ocurences
 				try{
 					//read in treemap from file
-					boolean append = false;
 
                     PersistentStorageReader in = super.getReader(filename);
                     Map<String, String> fileMap = jsonToMap(in.readLine());
@@ -230,6 +242,8 @@ public class TwitterNode extends RIONode {
 			}else{
 				response += "unknown command: " + command;
 			}
+            
+            // close any oper readers/writers
 			if(writer != null){
 				try{
 					writer.close();
@@ -274,7 +288,7 @@ public class TwitterNode extends RIONode {
 		pending_commands = new LinkedList<String>();
 		commandInProgress = 0;
         gson = new Gson();
-        transaction_id = "-1";
+        transaction_id = INVALID_TID;
 
         readRecoveryFileAndApplyChanges();
 
@@ -396,6 +410,7 @@ public class TwitterNode extends RIONode {
 		}
 		
 		// queue up the command
+		//TODO move these around? how do we handle abors by the server?
         pending_commands.add(COMMAND_START_TRANSACTION);
 		pending_commands.add(command);
         pending_commands.add(COMMAND_COMMIT_TRANSACTION);
@@ -540,9 +555,9 @@ public class TwitterNode extends RIONode {
 	}
 
 	private Set<Long> rcp_create(String parameters, long seq_num){
-		rpc_call(0, Protocol.TWITTER_PKT, "create " + parameters + TWEET_FILE_SUFFIX, seq_num);
-		rpc_call(0, Protocol.TWITTER_PKT, "create " + parameters + FOLLOWERS_FILE_SUFFIX, seq_num + 1);
-		rpc_call(0, Protocol.TWITTER_PKT, "create " + parameters + INFO_FILE_SUFFIX, seq_num + 2);
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + TWEET_FILE_SUFFIX, seq_num);
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + FOLLOWERS_FILE_SUFFIX, seq_num + 1);
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + INFO_FILE_SUFFIX, seq_num + 2);
 		Set<Long> returned = new TreeSet<Long>();
 		returned.add(seq_num);
 		returned.add(seq_num + 1);
@@ -555,7 +570,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_login(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, "read " + parameters + INFO_FILE_SUFFIX, seq_num);
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_READ + " " + parameters + INFO_FILE_SUFFIX, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -563,7 +578,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_post(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, "append " + username + TWEET_FILE_SUFFIX + " " + parameters, seq_num);
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_APPEND +" " + username + TWEET_FILE_SUFFIX + " " + parameters, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -571,7 +586,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_add(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, "append " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_APPEND + " " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -579,7 +594,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_delete(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, "delete " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_DELETE + " " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -587,7 +602,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_read(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, "read " + username + FOLLOWERS_FILE_SUFFIX, seq_num);
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_READ + " " + username + FOLLOWERS_FILE_SUFFIX, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -598,7 +613,7 @@ public class TwitterNode extends RIONode {
 		Set<Long> returned = new TreeSet<Long>();
 		int count = 0;
 		for(String username: usernames){
-			rpc_call(0, Protocol.TWITTER_PKT, "read " + username + TWEET_FILE_SUFFIX, seq_num + count);
+			rpc_call(0, Protocol.TWITTER_PKT, RPC_READ + " " + username + TWEET_FILE_SUFFIX, seq_num + count);
 			returned.add(seq_num + count);
 			acked.put(seq_num + count, false);
 		}
@@ -608,7 +623,7 @@ public class TwitterNode extends RIONode {
 
     private Set<Long> rcp_transaction(long seq_num){
         Set<Long> returned = new TreeSet<Long>();
-        rpc_call(0, Protocol.TWITTER_PKT, "transaction", seq_num);
+        rpc_call(0, Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
         acked.put(seq_num, false);
         returned.add(seq_num);
         return returned;
