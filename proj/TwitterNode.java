@@ -21,6 +21,7 @@ public class TwitterNode extends RIONode {
 
 	private long seq_num;
 	private Queue<String> pending_commands;
+    private Queue<String> active_commands;
 	private int commandInProgress;
 
 	private String username;
@@ -29,7 +30,10 @@ public class TwitterNode extends RIONode {
 	private Gson gson;
 	private String transaction_id;
 
-	private static final String TWEET_FILE_SUFFIX = "-tweets";
+    private Map<String, TransactionState> transactionStateMap;
+
+
+    private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
@@ -46,10 +50,17 @@ public class TwitterNode extends RIONode {
 
 	private static final String RPC_START_TXN = "start_transaction";
 	private static final String RPC_COMMIT = "commit";
+    private static final String RPC_ABORT = "abort";
 	private static final String RPC_READ = "read";
 	private static final String RPC_APPEND = "append";
 	private static final String RPC_DELETE = "delete";
 	private static final String RPC_CREATE = "create";
+
+    private enum TransactionState {
+        COMMITTED,
+        IN_PROGRESS,
+        ABORTED
+    }
 
 	@Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
@@ -210,7 +221,11 @@ public class TwitterNode extends RIONode {
 				e.printStackTrace();
 			}
 			response += "okay";
-		}else{
+		} else if(command.equals(RPC_COMMIT)) {
+            //TODO send back commit or abort message
+        //    response += RPC_COMMIT;
+            response += RPC_COMMIT;
+        }else{
 			response += "unknown command: " + command;
 		}
 
@@ -251,10 +266,15 @@ public class TwitterNode extends RIONode {
 		if(command.equals(RPC_START_TXN)){
 			// we've received our transaction ID
 			transaction_id = map.get(JSON_TRANSACTION_ID);
+            transactionStateMap.put(transaction_id, TransactionState.IN_PROGRESS);
 		}else if(command.equals(RPC_COMMIT)){
 			// we've received the confirmation of a transaction
-			transaction_id = INVALID_TID;
-		}else if(command.equals(RPC_READ)){
+			//transaction_id = INVALID_TID;
+            transactionStateMap.put(transaction_id, TransactionState.COMMITTED);
+        }else if(command.equals(RPC_ABORT)){
+            transactionStateMap.put(transaction_id, TransactionState.ABORTED);
+
+        }else if(command.equals(RPC_READ)){
 			//read response
 			//check if it is a read of a '-following' file or '-tweets'
 			String filename = received.split("\\s")[1];
@@ -298,14 +318,17 @@ public class TwitterNode extends RIONode {
 
 		// initialize local variables
 		acked = new HashMap<Long, Boolean>();
-		seq_num = System.currentTimeMillis();
+		seq_num = System.currentTimeMillis();    //TODO switch to util class
 		tweets = new HashMap<String, String>();
 		pending_commands = new LinkedList<String>();
 		commandInProgress = 0;
 		gson = new Gson();
 		transaction_id = INVALID_TID;
+        transactionStateMap = new TreeMap<String, TransactionState>();
+        active_commands = new LinkedList<String>();
 
-		// finish writing files, if necessary
+
+        // finish writing files, if necessary
 		readRecoveryFileAndApplyChanges();
 
 		// Write empty temp file
@@ -427,9 +450,9 @@ public class TwitterNode extends RIONode {
 
 		// queue up the command
 		//TODO move these around? how do we handle abors by the server?
-		pending_commands.add(COMMAND_START_TRANSACTION);
+	//	pending_commands.add(COMMAND_START_TRANSACTION);
 		pending_commands.add(command);
-		pending_commands.add(COMMAND_COMMIT_TRANSACTION);
+	//	pending_commands.add(COMMAND_COMMIT_TRANSACTION);
 	}
 
 
@@ -525,7 +548,17 @@ public class TwitterNode extends RIONode {
 				callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
 				commandInProgress++;
 			}
-		} else {
+        } else if (operation.equals(COMMAND_START_TRANSACTION)){
+            outstandingAcks = rcp_start_transaction(seq_num);
+            callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+            commandInProgress++;
+
+        } else if (operation.equals(COMMAND_COMMIT_TRANSACTION)){
+            outstandingAcks = rcp_commit_transaction(seq_num);
+            callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+            commandInProgress++;
+
+        } else {
 			System.out.println("Unknown operation: " + operation);
 		}
 		updateSeqNum(outstandingAcks);
@@ -537,7 +570,7 @@ public class TwitterNode extends RIONode {
 	 * methods used to send RPCs to the server
 	 */
 	
-
+    /*
 	private void startTransaction(){
 		Set<Long> outstandingAcks = new TreeSet<Long>();
 		outstandingAcks = rcp_transaction(seq_num);
@@ -546,6 +579,7 @@ public class TwitterNode extends RIONode {
 
 		updateSeqNum(outstandingAcks);
 	}
+	*/
 
 	private void rpc_call(int node, int p, String msg, long seq_num){
 		System.out.println("rcp_call sending message: " + node + " " + seq_num + " " + msg);
@@ -644,15 +678,32 @@ public class TwitterNode extends RIONode {
 		return returned;
 	}
 
+    /*
 	private Set<Long> rcp_transaction(long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
 		rpc_call(0, Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
-	}
-	
-	
+	} */
+
+    private Set<Long> rcp_start_transaction(long seq_num){
+        Set<Long> returned = new TreeSet<Long>();
+        rpc_call(0, Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
+        acked.put(seq_num, false);
+        returned.add(seq_num);
+        return returned;
+    }
+
+    private Set<Long> rcp_commit_transaction(long seq_num){
+        Set<Long> returned = new TreeSet<Long>();
+        rpc_call(0, Protocol.TWITTER_PKT, RPC_COMMIT, seq_num);
+        acked.put(seq_num, false);
+        returned.add(seq_num);
+        return returned;
+    }
+
+
 	/*
 	 * CALLBACKS
 	 * 
@@ -661,14 +712,51 @@ public class TwitterNode extends RIONode {
 	
 	
 	public void commandTickCallback(){
-		if(commandInProgress == 0 && !pending_commands.isEmpty()){
-			if(transaction_id.equals("-1")){
-				startTransaction();
-			}else{
-				String command = pending_commands.remove();
-				System.out.println("executing command: " + command);
-				onCommand_ordered(command);
-			}
+
+        TransactionState state = transactionStateMap.get(transaction_id);
+        if(commandInProgress == 0 && !pending_commands.isEmpty()){
+            /*
+            if(transaction_id == INVALID_TID || state == TransactionState.COMMITTED){
+                if(state == TransactionState.COMMITTED){
+                    active_commands.clear();
+                    pending_commands.remove();
+                }
+                if(!pending_commands.isEmpty()){
+                    active_commands.add(COMMAND_START_TRANSACTION);
+                    active_commands.add(pending_commands.peek());
+                    active_commands.add(COMMAND_COMMIT_TRANSACTION);
+                }
+            }else if(state == TransactionState.IN_PROGRESS){
+                //wait
+            }else if(state == TransactionState.ABORTED){
+                transaction_id = INVALID_TID;
+                active_commands.clear();
+                active_commands.add(COMMAND_START_TRANSACTION);
+                active_commands.add(pending_commands.peek());
+                active_commands.add(COMMAND_COMMIT_TRANSACTION);
+            }
+                */
+            if(state == TransactionState.COMMITTED){
+                pending_commands.remove();
+                transaction_id = INVALID_TID;
+            }else if(state == TransactionState.ABORTED){
+                transaction_id = INVALID_TID;
+                active_commands.clear();
+            }
+
+            if(transaction_id == INVALID_TID){
+                active_commands.clear();
+                if(!pending_commands.isEmpty()){
+                    active_commands.add(COMMAND_START_TRANSACTION);
+                    active_commands.add(pending_commands.peek());
+                    active_commands.add(COMMAND_COMMIT_TRANSACTION);
+                }
+            }
+        }
+		if(commandInProgress == 0 && !active_commands.isEmpty()){
+            String command = active_commands.remove();
+            System.out.println("executing command: " + command);
+            onCommand_ordered(command);
 		}
 
 		if(!pending_commands.isEmpty()) {
@@ -822,6 +910,7 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
+    /*
 	public void transaction_callback(Set<Long> outstandingAcks) {
 		System.out.println("transaction callback called");
 
@@ -839,11 +928,85 @@ public class TwitterNode extends RIONode {
 			rcp_transaction(min_ack);
 			callback("transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
 		}
-	}	
-	
-	/*
-	 * ASSORED HELPER FUNCTIONS
-	 */
+	}
+	*/
+
+    public void start_transaction_callback(Set<Long> outstandingAcks) {
+        System.out.println("start_transaction_callback called: " );
+        boolean all_acked = allAcked(outstandingAcks);
+
+        if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
+            String response = packetBytesToString(this.msg);
+
+            System.out.println("Transaction started");
+            System.out.println("response: " + response);
+
+            commandInProgress--;
+        } else {
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
+            rcp_start_transaction(min_ack);
+            callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+        }
+    }
+
+
+    public void commit_transaction_callback(Set<Long> outstandingAcks) {
+        System.out.println("commit_transaction_callback called: " );
+        boolean all_acked = allAcked(outstandingAcks);
+
+        if(all_acked) {
+            for(Long ack : outstandingAcks) {
+                acked.remove(ack);
+            }
+            String response = packetBytesToString(this.msg);
+
+            System.out.println("Transaction committed");
+            System.out.println("response: " + response);
+
+            commandInProgress--;
+        } else {
+            long min_ack = Long.MAX_VALUE;
+            for(Long num : outstandingAcks){
+                min_ack = Math.min(num, min_ack);
+            }
+            rcp_commit_transaction(min_ack);
+            callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+        }
+    }
+
+
+/*
+     * ASSORED HELPER FUNCTIONS
+     */
+
+    /*
+     * Increments commandInProgress by one
+     * If from 0 to 1, starts a new transaction
+     */
+    /*
+    private void incrementCommandInProgress(){
+        if(commandInProgress == 0 ){
+            commandInProgress++;
+
+        }
+    }
+    */
+
+    /*
+    * Decrements commandInProgress by one
+    * If from 1 to 0, commits transaction
+    */
+    /*
+    private void decrementCommandInProgress(){
+
+    }
+    */
 
 	/*
 	 * returns true if all longs in outstandingAcks are
@@ -900,4 +1063,7 @@ public class TwitterNode extends RIONode {
 	public String toString() {
 		return super.toString();
 	}
+
+
+
 }
