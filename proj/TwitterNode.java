@@ -32,7 +32,6 @@ public class TwitterNode extends RIONode {
 
     private Map<String, TransactionState> transactionStateMap;
 
-
     private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
@@ -62,6 +61,14 @@ public class TwitterNode extends RIONode {
         ABORTED
     }
 
+    private Map<Integer, TransactionData> clientMap;
+
+    private class TransactionData {
+        public String tid;
+        public String rid;
+        public Map<String, String> rid_action_map;
+    }
+
 	@Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
 		// extract the sequence num from the message, update this node's seq_num
@@ -79,14 +86,14 @@ public class TwitterNode extends RIONode {
 
 		//msg from client, server executes code
 		if(from == 1){
-			processMessageAsServer(msg);
+			processMessageAsServer(msg, from);
 		}
 	}
 
     /*
      * RIOReceive method for server
      */
-	private void processMessageAsServer(byte[] msg) {
+	private void processMessageAsServer(byte[] msg, int client_id) {
 		String msgJson = packetBytesToString(msg);
 		Map<String, String> msgMap = jsonToMap(msgJson);
 		String received = msgMap.get(JSON_MSG);
@@ -116,7 +123,18 @@ public class TwitterNode extends RIONode {
 		// execute the requested command
 		if(command.equals(RPC_START_TXN)){
 			//request to start a transaction
-			response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
+            TransactionData transaction = clientMap.get(client_id);
+            if(transaction != null && transaction.rid.equals(request_id)){
+                response_map.put(JSON_TRANSACTION_ID, transaction.tid);
+            } else {
+                response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
+                transaction = new TransactionData();
+                transaction.tid = Long.toString(seq_num);
+                transaction.rid = request_id;
+                transaction.rid_action_map = new TreeMap<String, String>();
+                clientMap.put(client_id, transaction);
+            }
+
 			response += RPC_START_TXN;
 
         } else if(command.equals(RPC_COMMIT)) {
@@ -328,6 +346,7 @@ public class TwitterNode extends RIONode {
 		transaction_id = INVALID_TID;
         transactionStateMap = new TreeMap<String, TransactionState>();
         active_commands = new LinkedList<String>();
+        clientMap = new TreeMap<Integer, TransactionData>();
 
 
         // finish writing files, if necessary
