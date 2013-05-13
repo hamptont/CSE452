@@ -13,8 +13,8 @@ import java.util.Map.Entry;
 public class TwitterNode extends RIONode {
 	public static double getFailureRate() { return 0/100.0; }
 	public static double getRecoveryRate() { return 0/100.0; }
-	public static double getDropRate() { return 5/100.0; }
-	public static double getDelayRate() { return 5/100.0; }
+	public static double getDropRate() { return 11/100.0; }
+	public static double getDelayRate() { return 11/100.0; }
 
 	private Map<Long, Boolean> acked;
 	private byte[] msg;
@@ -116,8 +116,7 @@ public class TwitterNode extends RIONode {
 				&& !command.equals(RPC_START_TXN)) {
 			//received request from unknown transaction
 			//send abort, client must retry
-			response += RPC_ABORT;
-			
+			response = RPC_ABORT;
 		} else if(command.equals(RPC_START_TXN)){
 			//request to start a transaction
             TransactionData transaction = clientMap.get(client_id);
@@ -133,6 +132,7 @@ public class TwitterNode extends RIONode {
                 transaction.rid = request_id;
                 transaction.rid_action_map = new TreeMap<String, String>();
                 clientMap.put(client_id, transaction);
+                transactionStateMap.put(transaction.tid, TransactionState.IN_PROGRESS);
             }
 
 			response = RPC_START_TXN;
@@ -146,14 +146,23 @@ public class TwitterNode extends RIONode {
                 //need to start transaction
                 response = RPC_ABORT;
             } else {
-                response = RPC_COMMIT;
-                //TODO: check if transaction needs to be aborted
-                Map<String, String> requests =  transaction.rid_action_map;
-                for(String s : requests.keySet()){
-                    String json = requests.get(s);
-                    Map<String, String> jsonMap = jsonToMap(json);
-                    processTransaction(jsonMap);
-                    System.out.println("TRANSACTION BEING PROCESSED: " + json);
+                Random r = new Random();
+                boolean abort = r.nextInt() % 3 == 0;
+                //TODO Currently randomly aborts some transactions to test abort/commit logic
+                if(abort){
+                    response = RPC_ABORT;
+
+                } else {
+                    //TODO: check if transaction needs to be aborted
+                    Map<String, String> requests =  transaction.rid_action_map;
+                    for(String s : requests.keySet()){
+                        String json = requests.get(s);
+                        Map<String, String> jsonMap = jsonToMap(json);
+                        processTransaction(jsonMap);
+                        System.out.println("TRANSACTION BEING PROCESSED: " + json);
+                    }
+
+                    response = RPC_COMMIT;
                 }
             }
         } else {
@@ -269,7 +278,14 @@ public class TwitterNode extends RIONode {
 
 		}
 	}
-	
+
+    /*
+     * This method actually applies the twitter command to disk.
+     * Should only be called after the transaction has been committed
+     * and all commands in the transaction as been checked to see if they need to be aborted
+     *
+     * Processes exactly one RCP call - should be called multiple tiems for each command in the transaction.
+     */
 	private String processTransaction(Map<String, String> msgMap){
         String response = "";
         PersistentStorageWriter writer = null;
@@ -759,7 +775,6 @@ public class TwitterNode extends RIONode {
                 transaction_id = INVALID_TID;
             }else if(state == TransactionState.ABORTED){
                 transaction_id = INVALID_TID;
-                active_commands.clear();
             }
 
             if(transaction_id == INVALID_TID){
