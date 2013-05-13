@@ -13,8 +13,8 @@ import java.util.Map.Entry;
 public class TwitterNode extends RIONode {
 	public static double getFailureRate() { return 0/100.0; }
 	public static double getRecoveryRate() { return 0/100.0; }
-	public static double getDropRate() { return 0/100.0; }
-	public static double getDelayRate() { return 0/100.0; }
+	public static double getDropRate() { return 5/100.0; }
+	public static double getDelayRate() { return 5/100.0; }
 
 	private Map<Long, Boolean> acked;
 	private byte[] msg;
@@ -101,13 +101,6 @@ public class TwitterNode extends RIONode {
 
 		System.out.println("message received by server: " + msgJson);
 		String command = received.split("\\s")[0];
-		String filename = "";
-		try{
-			//All requests should have a filename except transactions
-			filename =  received.split("\\s")[1];
-		}catch(Exception e){
-
-		}
 
 		String response = "";
 
@@ -117,16 +110,16 @@ public class TwitterNode extends RIONode {
 		response_map.put(JSON_REQUEST_ID, request_id);
 		response_map.put(JSON_TRANSACTION_ID, msgMap.get(JSON_TRANSACTION_ID));
 
-		PersistentStorageWriter writer = null;
-		PersistentStorageInputStream byte_reader = null;
-
 		// execute the requested command
 		if(command.equals(RPC_START_TXN)){
 			//request to start a transaction
             TransactionData transaction = clientMap.get(client_id);
             if(transaction != null && transaction.rid.equals(request_id)){
+                //transaction already started -- duplicate message
+                //return transaction ID of current transaction
                 response_map.put(JSON_TRANSACTION_ID, transaction.tid);
             } else {
+                //set up transaction start
                 response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
                 transaction = new TransactionData();
                 transaction.tid = Long.toString(seq_num);
@@ -135,140 +128,51 @@ public class TwitterNode extends RIONode {
                 clientMap.put(client_id, transaction);
             }
 
-			response += RPC_START_TXN;
+			response = RPC_START_TXN;
 
         } else if(command.equals(RPC_COMMIT)) {
             //request to commit transaction
-            //TODO send back commit or abort message
-            //    response += RPC_COMMIT;
-            response += RPC_COMMIT;
-		}else if(command.equals(RPC_CREATE)) {
-			response += "okay";
-			try{
-				boolean append = false;
-				writer = super.getWriter(filename, append);
-				TreeMap<String, String> fileMap = new TreeMap<String, String>();
-				writer.write(mapToJson(fileMap));
+            //TODO need to check if transaction needs to be aborted
+            TransactionData transaction = clientMap.get(client_id);
+            if(transaction == null){
+                //no active transaction
+                //need to start transaction
+                response = RPC_ABORT;
+            } else {
+                response = RPC_COMMIT;
+                //TODO: check if transaction needs to be aborted
+                Map<String, String> requests =  transaction.rid_action_map;
+                for(String s : requests.keySet()){
+                    String json = requests.get(s);
+                    Map<String, String> jsonMap = jsonToMap(json);
+                    processTransaction(jsonMap);
+                    System.out.println("TRANSACTION BEING PROCESSED: " + json);
+                }
+            }
+        } else {
+            //regular twitter command
+            TransactionData transaction = clientMap.get(client_id);
+            if(transaction == null){
+                //no active transaction
+                //need to start transaction
+                response = RPC_ABORT;
+            } else if(command.equals(RPC_READ)){
+                //read request
+                //TODO might need to store reads in transaction.rid_action_map
+                //reads currently are processed right away, not stored in the transaction log
+                response = processTransaction(msgMap);
+            }else{
+                //write request
+                //store request in transaction map to be applied on commit
+                transaction.rid_action_map.put(request_id, msgJson);
+                //TODO: check if transaction needs to be aborted
+            }
+        }
 
-			}catch(Exception e){
-				e.printStackTrace();
-			}
-
-		} else if(command.equals(RPC_APPEND)) {
-			try{
-				boolean append = false;
-				PersistentStorageReader in = super.getReader(filename);
-				Map<String, String> fileMap = jsonToMap(in.readLine());
-				in.close();
-
-				if(!fileMap.containsKey(request_id)){
-					//duplicate request
-					writer = super.getWriter(filename, append);
-					String tweet = received.substring(command.length() + filename.length() + 2);
-					fileMap.put(request_id, tweet);
-
-					//serialize object to json
-					String serialized = mapToJson(fileMap);
-
-					System.out.println("writing to file");
-					addToLog(filename, serialized);
-					writer.write(serialized);
-					removeFromLog(filename);
-				} else {
-					System.out.println("Append not processed, timestamp already exists: " + received);
-				}
-
-				//debug
-				System.out.println("MAP VALUES (append): ");
-				System.out.println(fileMap.values());
-			}catch(Exception e){
-				System.out.println();
-				e.printStackTrace();
-			}
-			response += "okay";
-		} else if(command.equals(RPC_READ)) {
-			try{
-				response += RPC_READ + " " + filename + " ";
-				PersistentStorageReader in = super.getReader(filename);
-				Map<String, String> fileMap = jsonToMap(in.readLine());
-				in.close();
-
-				String username = filename.split("-")[0];
-				for(String s : fileMap.keySet()){
-					//return values -- username of people you are following
-					response += s + username + " " + fileMap.get(s) + "\n";
-				}
-				response = response.trim();
-			}catch(Exception e){
-
-			}
-		} else if(command.equals(RPC_DELETE)){
-			//Removing followers from "-followers" file
-			//If user is not currently being followed -- does nothing
-			//If user is being followed multiple times -- removes all ocurences
-			try{
-				//read in treemap from file
-
-				PersistentStorageReader in = super.getReader(filename);
-				Map<String, String> fileMap = jsonToMap(in.readLine());
-				in.close();
-
-				String unfollow_username = received.substring(command.length() + filename.length() + 2);
-				if(fileMap.values().contains(unfollow_username)){
-					//remove user
-					Set<String> keysToRemove = new HashSet<String>();
-					for (Map.Entry<String,String> entry : fileMap.entrySet()) {
-						String key = entry.getKey();
-						String value = entry.getValue();
-						if(value.equals(unfollow_username)){
-							keysToRemove.add(key);
-						}
-					}
-
-					//Can't modify map while iterating -- make modifications after
-					for(String key : keysToRemove){
-						fileMap.remove(key);
-					}
-
-					//serialize object
-					String serialized = mapToJson(fileMap);
-					addToLog(filename, serialized);
-					System.out.println("writing to file");
-					writer.write(serialized);
-					removeFromLog(filename);
-				}
-
-				//debug
-				System.out.println("MAP VALUES (remove): ");
-				System.out.println(fileMap.values());
-			}catch(Exception e){
-				e.printStackTrace();
-			}
-			response += "okay";
-        }else{
-			response += "unknown command: " + command;
-		}
-
-		// close any oper readers/writers
-		if(writer != null){
-			try{
-				writer.close();
-			}catch(Exception e){
-
-			}
-		}
-		if(byte_reader != null){
-			try{
-				byte_reader.close();
-			}catch(Exception e){
-
-			}
-		}
-
-		System.out.println("Server sending response: " + response);
+		System.out.println("Server sending response: " + response_map);
 		response_map.put(JSON_MSG, response);
 		RIOSend(1, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
-	}
+    }
 
     /*
      *  RIOReceive for client
@@ -348,7 +252,6 @@ public class TwitterNode extends RIONode {
         active_commands = new LinkedList<String>();
         clientMap = new TreeMap<Integer, TransactionData>();
 
-
         // finish writing files, if necessary
 		readRecoveryFileAndApplyChanges();
 
@@ -360,7 +263,140 @@ public class TwitterNode extends RIONode {
 		}
 	}
 	
-	
+	private String processTransaction(Map<String, String> msgMap){
+        String response = "";
+        PersistentStorageWriter writer = null;
+
+        String received = msgMap.get(JSON_MSG);
+        String request_id = msgMap.get(JSON_REQUEST_ID);
+        String command = received.split("\\s")[0];
+
+        String filename = "";
+        try{
+            //All requests should have a filename except transactions
+            filename =  received.split("\\s")[1];
+        }catch(Exception e){
+
+        }
+
+        if(command.equals(RPC_CREATE)) {
+            response += "okay";
+            try{
+                boolean append = false;
+                writer = super.getWriter(filename, append);
+                TreeMap<String, String> fileMap = new TreeMap<String, String>();
+                writer.write(mapToJson(fileMap));
+
+            }catch(Exception e){
+                e.printStackTrace();
+            }
+
+        } else if(command.equals(RPC_APPEND)) {
+            try{
+                boolean append = false;
+                PersistentStorageReader in = super.getReader(filename);
+                Map<String, String> fileMap = jsonToMap(in.readLine());
+                in.close();
+
+                if(!fileMap.containsKey(request_id)){
+                    //duplicate request
+                    writer = super.getWriter(filename, append);
+                    String tweet = received.substring(command.length() + filename.length() + 2);
+                    fileMap.put(request_id, tweet);
+
+                    //serialize object to json
+                    String serialized = mapToJson(fileMap);
+
+                    System.out.println("writing to file");
+                    addToLog(filename, serialized);
+                    writer.write(serialized);
+                    removeFromLog(filename);
+                } else {
+                    System.out.println("Append not processed, timestamp already exists: " + received);
+                }
+
+                //debug
+                System.out.println("MAP VALUES (append): ");
+                System.out.println(fileMap.values());
+            }catch(Exception e){
+                System.out.println();
+                e.printStackTrace();
+            }
+            response += "okay";
+        } else if(command.equals(RPC_READ)) {
+            try{
+                response += RPC_READ + " " + filename + " ";
+                PersistentStorageReader in = super.getReader(filename);
+                Map<String, String> fileMap = jsonToMap(in.readLine());
+                in.close();
+
+                String username = filename.split("-")[0];
+                for(String s : fileMap.keySet()){
+                    //return values -- username of people you are following
+                    response += s + username + " " + fileMap.get(s) + "\n";
+                }
+                response = response.trim();
+            }catch(Exception e){
+
+            }
+        } else if(command.equals(RPC_DELETE)){
+            //Removing followers from "-followers" file
+            //If user is not currently being followed -- does nothing
+            //If user is being followed multiple times -- removes all ocurences
+            try{
+                //read in treemap from file
+
+                PersistentStorageReader in = super.getReader(filename);
+                Map<String, String> fileMap = jsonToMap(in.readLine());
+                in.close();
+
+                String unfollow_username = received.substring(command.length() + filename.length() + 2);
+                if(fileMap.values().contains(unfollow_username)){
+                    //remove user
+                    Set<String> keysToRemove = new HashSet<String>();
+                    for (Map.Entry<String,String> entry : fileMap.entrySet()) {
+                        String key = entry.getKey();
+                        String value = entry.getValue();
+                        if(value.equals(unfollow_username)){
+                            keysToRemove.add(key);
+                        }
+                    }
+
+                    //Can't modify map while iterating -- make modifications after
+                    for(String key : keysToRemove){
+                        fileMap.remove(key);
+                    }
+
+                    //serialize object
+                    String serialized = mapToJson(fileMap);
+                    addToLog(filename, serialized);
+                    System.out.println("writing to file");
+                    writer.write(serialized);
+                    removeFromLog(filename);
+                }
+
+                //debug
+                System.out.println("MAP VALUES (remove): ");
+                System.out.println(fileMap.values());
+            }catch(Exception e){
+                e.printStackTrace();
+            }
+            response += "okay";
+        }else{
+            response += "unknown command: " + command;
+        }
+
+        if(writer != null){
+            try{
+                writer.close();
+            }catch(Exception e){
+
+            }
+        }
+        return response;
+    }
+
+
 	/*
 	 * File manipulation methods
 	 */
