@@ -54,6 +54,7 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_APPEND = "append";
 	private static final String RPC_DELETE = "delete";
 	private static final String RPC_CREATE = "create";
+	//private static final String NO_TXN_ERR = "no_txn_in_progress";
 
     private enum TransactionState {
         COMMITTED,
@@ -121,7 +122,13 @@ public class TwitterNode extends RIONode {
 		PersistentStorageInputStream byte_reader = null;
 
 		// execute the requested command
-		if(command.equals(RPC_START_TXN)){
+		if(!transactionStateMap.containsKey(msgMap.get(JSON_TRANSACTION_ID)) 
+				&& !command.equals(RPC_START_TXN)) {
+			//received request from unknown transaction
+			//send abort, client must retry
+			response += RPC_ABORT;
+			
+		} else if(command.equals(RPC_START_TXN)){
 			//request to start a transaction
             TransactionData transaction = clientMap.get(client_id);
             if(transaction != null && transaction.rid.equals(request_id)){
