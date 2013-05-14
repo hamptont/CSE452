@@ -13,8 +13,8 @@ import java.util.Map.Entry;
 public class TwitterNode extends RIONode {
 	public static double getFailureRate() { return 0/100.0; }
 	public static double getRecoveryRate() { return 0/100.0; }
-	public static double getDropRate() { return 0/100.0; }
-	public static double getDelayRate() { return 0/100.0; }
+	public static double getDropRate() { return 10/100.0; }
+	public static double getDelayRate() { return 10/100.0; }
 
 	private Map<Long, Boolean> acked;
 	private byte[] msg;
@@ -37,7 +37,9 @@ public class TwitterNode extends RIONode {
     /**
      * String constants
      */
-    
+
+    private static final int NUM_SERVER_NODES = 128;
+
     private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
@@ -98,12 +100,12 @@ public class TwitterNode extends RIONode {
 		seq_num = Math.max(remote_seq_num, seq_num) + 1;
 
 		//msg from server, client executes code
-		if(from == 0) {
+		if(from < NUM_SERVER_NODES) {
 			processMessageAsClient(msg);
 		}
 
 		//msg from client, server executes code
-		if(from == 1){
+		if(from >= NUM_SERVER_NODES){
 			processMessageAsServer(msg, from);
 		}
 	}
@@ -156,7 +158,6 @@ public class TwitterNode extends RIONode {
 
         } else if(command.equals(RPC_COMMIT)) {
             //request to commit transaction
-            //TODO need to check if transaction needs to be aborted
             TransactionData transaction = clientMap.get(client_id);
             if(transaction == null){
                 //no active transaction
@@ -165,34 +166,20 @@ public class TwitterNode extends RIONode {
             } else {
                 Map<String, String> requests =  transaction.rid_action_map;
 
-
-                //TODO: check if transaction needs to be aborted
-                boolean abort = false;
-                for(String s : requests.keySet()){
-                    String json = requests.get(s);
-                    Map<String, String> jsonMap = jsonToMap(json);
-                    //TODO CHECK TO SEE IF TRANSACTION NEEDS TO BE ABORTED
-                    boolean need_to_abort = false; //TODO
-                    if(need_to_abort){
-                        abort = true;
-                    }
-
-                }
-
-                //process the actual commands
-                for(String s : requests.keySet()){
-                    String json = requests.get(s);
-                    Map<String, String> jsonMap = jsonToMap(json);
-                    processTransaction(jsonMap);
-                    System.out.println("TRANSACTION BEING PROCESSED: " + json);
-                }
+                boolean abort = txnMustAbort(client_id);
 
                 if(abort){
                     response = RPC_ABORT;
                 }else{
                     response = RPC_COMMIT;
+                    //process the actual commands
+                    for(String s : requests.keySet()){
+                        String json = requests.get(s);
+                        Map<String, String> jsonMap = jsonToMap(json);
+                        processTransaction(jsonMap);
+                        System.out.println("TRANSACTION BEING PROCESSED: " + json);
+                    }
                 }
-
             }
         } else {
             //regular twitter command
@@ -203,23 +190,29 @@ public class TwitterNode extends RIONode {
                 response = RPC_ABORT;
             } else if(command.equals(RPC_READ)){
                 //read request
-                //TODO might need to store reads in transaction.rid_action_map
                 //reads currently are processed right away, not stored in the transaction log
                 response = processTransaction(msgMap);
             }else{
                 //write request
                 //store request in transaction map to be applied on commit
                 transaction.rid_action_map.put(request_id, msgJson);
-                //TODO: check if transaction needs to be aborted
             }
         }
 
-		System.out.println("Server sending response: " + response_map);
-		response_map.put(JSON_MSG, response);
-		RIOSend(1, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
+        //Check to see if we already finished our commit
+        if(!response.equals(RPC_COMMIT)){
+            boolean abort = txnMustAbort(client_id);
+            if(abort){
+                response = RPC_ABORT;
+            }
+        }
+
+        response_map.put(JSON_MSG, response);
+
+        System.out.println("Server sending response: " + response_map);
+		RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
     }
 	
-	//TODO move files over to the TwitterFile model
 	private boolean txnMustAbort(int clientId) {
 		TransactionData transaction = clientMap.get(clientId);
 		String txnId = transaction.tid;
@@ -232,8 +225,12 @@ public class TwitterNode extends RIONode {
 		// for each operation, 
 		// make sure that the file version is consistent with the transaction
 		for(Entry<String, String> op : operations.entrySet()) {
-			String command = op.getValue().split("\\s")[0];
-			String filename = op.getValue().split("\\s")[1];
+            System.out.println("client id: " + clientId);
+            System.out.println("command: " + op.getValue());
+            Map<String,String> map = jsonToMap(op.getValue());
+
+			String command = map.get(JSON_MSG).split("\\s")[0];
+			String filename = map.get(JSON_MSG).split("\\s")[1];
 			
 			if(command.equals(RPC_APPEND) || command.equals(RPC_READ)) {
 				if(!newlyCreatedFiles.contains(filename)) {
@@ -246,12 +243,14 @@ public class TwitterNode extends RIONode {
 						if(txnId.compareTo(file.fileVersion) < 0) {
 							// if the transactionId is less than the file version,
 							// the file has been written and we need to abort
+                            System.out.println("transaction aborted~");
 							return true;
 						}
 						
 					} catch (FileNotFoundException e) {
 						// if the file is deleted, txn must abort
-						return true;
+                        System.out.println("transaction aborted~");
+                        return true;
 					} catch (IOException e) {
 						throw new RuntimeException("Could not read file: "+filename,e);
 					}
@@ -262,8 +261,26 @@ public class TwitterNode extends RIONode {
 					deletedFiles.remove(filename);
 					newlyCreatedFiles.add(filename);
 				} else {
-					// TODO do we still want to overwrite previous files?
-				}
+                    try {
+                        PersistentStorageReader reader = super.getReader(filename);
+                        String json = reader.readLine();
+                        TwitterFile file = jsonToTwitfile(json);
+
+                        if(json != null && txnId.compareTo(file.fileVersion) < 0) {
+                            // if the transactionId is less than the file version,
+                            // the file has been written and we need to abort
+                            System.out.println("transaction aborted~");
+                            return true;
+                        } else {
+                            newlyCreatedFiles.add(filename);
+                        }
+                    } catch (FileNotFoundException e) {
+                        // file doesn't exist, okay to create file
+                        newlyCreatedFiles.add(filename);
+                    } catch (IOException e) {
+                        throw new RuntimeException("Could not read file: "+filename,e);
+                    }
+                }
 			} else if (command.equals(RPC_DELETE)) {
 				if(newlyCreatedFiles.contains(filename)) {
 					// we created this file, ok to remove
@@ -278,15 +295,17 @@ public class TwitterNode extends RIONode {
 						if(txnId.compareTo(file.fileVersion) < 0) {
 							// if the transactionId is less than the file version,
 							// the file has been written and we need to abort
-							return true;
+                            System.out.println("transaction aborted~");
+                            return true;
 						} else {
 							deletedFiles.add(filename);
 						}
 					} catch (FileNotFoundException e) {
 						// file doesn't exist anymore, can't delete it!
-						return true;
+                        System.out.println("transaction aborted~");
+                        return true;
 					} catch (IOException e) {
-						throw new RuntimeException("Could not read file: "+filename,e);
+						throw new RuntimeException("Could not read file: " + filename,e);
 					}
 				}
 			}
@@ -375,6 +394,7 @@ public class TwitterNode extends RIONode {
         clientMap = new TreeMap<Integer, TransactionData>();
 
         // finish writing files, if necessary
+
 		readRecoveryFileAndApplyChanges();
 
 		// Write empty temp file
@@ -557,7 +577,6 @@ public class TwitterNode extends RIONode {
 			}			
 		} catch (Exception e) {
 			System.out.println("Unable to recover from log");
-			e.printStackTrace();
 		}
 	}
 
