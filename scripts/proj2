@@ -1,0 +1,17 @@
+start 0
+start 128
+start 129
+time
+128 create user1
+time
+128 login user1
+time
+129 login user1
+time
+129 post hello1 from user2
+128 post hello1 from user1
+129 post hello2 from user2
+128 post hello2 from user1
+129 post hello3 from user2
+128 post hello3 from user1
+time
