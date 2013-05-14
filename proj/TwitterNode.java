@@ -13,8 +13,8 @@ import java.util.Map.Entry;
 public class TwitterNode extends RIONode {
 	public static double getFailureRate() { return 0/100.0; }
 	public static double getRecoveryRate() { return 0/100.0; }
-	public static double getDropRate() { return 11/100.0; }
-	public static double getDelayRate() { return 11/100.0; }
+	public static double getDropRate() { return 0/100.0; }
+	public static double getDelayRate() { return 0/100.0; }
 
 	private Map<Long, Boolean> acked;
 	private byte[] msg;
@@ -31,11 +31,19 @@ public class TwitterNode extends RIONode {
 	private String transaction_id;
 
     private Map<String, TransactionState> transactionStateMap;
+    
+    private Map<Integer, TransactionData> clientMap;
 
+    /**
+     * String constants
+     */
+    
     private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
+	
+	private static final String FILE_VERSION_TAG = "file_version";
 
 	private static final String JSON_MSG = "msg";
 	private static final String JSON_REQUEST_ID = "request_id";
@@ -54,20 +62,27 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_APPEND = "append";
 	private static final String RPC_DELETE = "delete";
 	private static final String RPC_CREATE = "create";
-	//private static final String NO_TXN_ERR = "no_txn_in_progress";
+	private static final String STATUS_SUCCESS = "success";
+	
+	/**
+	 * Private helper classes
+	 */
 
     private enum TransactionState {
         COMMITTED,
         IN_PROGRESS,
         ABORTED
-    }
-
-    private Map<Integer, TransactionData> clientMap;
+    }   
 
     private class TransactionData {
         public String tid;
         public String rid;
         public Map<String, String> rid_action_map;
+    }
+    
+    private class TwitterFile {
+    	public String fileVersion;
+    	public Map<String, String> contents;
     }
 
 	@Override
@@ -201,6 +216,83 @@ public class TwitterNode extends RIONode {
 		response_map.put(JSON_MSG, response);
 		RIOSend(1, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
     }
+	
+	//TODO move files over to the TwitterFile model
+	private boolean txnMustAbort(int clientId) {
+		TransactionData transaction = clientMap.get(clientId);
+		String txnId = transaction.tid;
+		Map<String, String> operations = transaction.rid_action_map;
+		
+		// to keep track of which files will be wholly deleted/made in this txn
+		Set<String> deletedFiles = new TreeSet<String>();
+		Set<String> newlyCreatedFiles = new TreeSet<String>();
+		
+		// for each operation, 
+		// make sure that the file version is consistent with the transaction
+		for(Entry<String, String> op : operations.entrySet()) {
+			String command = op.getValue().split("\\s")[0];
+			String filename = op.getValue().split("\\s")[1];
+			
+			if(command.equals(RPC_APPEND) || command.equals(RPC_READ)) {
+				if(!newlyCreatedFiles.contains(filename)) {
+					// if the existing file is the one being used
+					try {
+						PersistentStorageReader reader = super.getReader(filename);
+						String json = reader.readLine();
+						TwitterFile file = jsonToTwitfile(json);
+						
+						if(txnId.compareTo(file.fileVersion) < 0) {
+							// if the transactionId is less than the file version,
+							// the file has been written and we need to abort
+							return true;
+						}
+						
+					} catch (FileNotFoundException e) {
+						// if the file is deleted, txn must abort
+						return true;
+					} catch (IOException e) {
+						throw new RuntimeException("Could not read file: "+filename,e);
+					}
+				}
+			} else if (command.equals(RPC_CREATE)) {
+				if (deletedFiles.contains(filename)) {
+					// we deleted the file before, so it's ok to make
+					deletedFiles.remove(filename);
+					newlyCreatedFiles.add(filename);
+				} else {
+					// TODO do we still want to overwrite previous files?
+				}
+			} else if (command.equals(RPC_DELETE)) {
+				if(newlyCreatedFiles.contains(filename)) {
+					// we created this file, ok to remove
+					newlyCreatedFiles.remove(filename);
+					deletedFiles.add(filename);
+				} else {
+					try {
+						PersistentStorageReader reader = super.getReader(filename);
+						String json = reader.readLine();
+						TwitterFile file = jsonToTwitfile(json);
+						
+						if(txnId.compareTo(file.fileVersion) < 0) {
+							// if the transactionId is less than the file version,
+							// the file has been written and we need to abort
+							return true;
+						} else {
+							deletedFiles.add(filename);
+						}
+					} catch (FileNotFoundException e) {
+						// file doesn't exist anymore, can't delete it!
+						return true;
+					} catch (IOException e) {
+						throw new RuntimeException("Could not read file: "+filename,e);
+					}
+				}
+			}
+		}
+		
+		// everything ok!
+		return false;
+	}
 
     /*
      *  RIOReceive for client
@@ -315,7 +407,7 @@ public class TwitterNode extends RIONode {
         }
 
         if(command.equals(RPC_CREATE)) {
-            response += "okay";
+            response += STATUS_SUCCESS;
             try{
                 boolean append = false;
                 writer = super.getWriter(filename, append);
@@ -357,7 +449,7 @@ public class TwitterNode extends RIONode {
                 System.out.println();
                 e.printStackTrace();
             }
-            response += "okay";
+            response += STATUS_SUCCESS;
         } else if(command.equals(RPC_READ)) {
             try{
                 response += RPC_READ + " " + filename + " ";
@@ -385,6 +477,7 @@ public class TwitterNode extends RIONode {
                 Map<String, String> fileMap = jsonToMap(in.readLine());
                 in.close();
 
+                writer = super.getWriter(filename, false);
                 String unfollow_username = received.substring(command.length() + filename.length() + 2);
                 if(fileMap.values().contains(unfollow_username)){
                     //remove user
@@ -416,11 +509,12 @@ public class TwitterNode extends RIONode {
             }catch(Exception e){
                 e.printStackTrace();
             }
-            response += "okay";
+            response += STATUS_SUCCESS;
         }else{
             response += "unknown command: " + command;
         }
-
+        
+        // close the storage writer, if one was opened
         if(writer != null){
             try{
                 writer.close();
@@ -466,14 +560,24 @@ public class TwitterNode extends RIONode {
 
 	// turns the Map into the equivalent json
 	private String mapToJson(Map<String, String> map) {
-		Type listType = new TypeToken<Map<String, String>>() {}.getType();
-		return gson.toJson(map, listType);
+		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
+		return gson.toJson(map, mapType);
 	}
 
 	// turns the json into a Map
 	private Map<String, String> jsonToMap(String json){
-		Type listType = new TypeToken<Map<String, String>>() {}.getType();
-		return gson.fromJson(json, listType);
+		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
+		return gson.fromJson(json, mapType);
+	}
+	
+	// turns a TwitterFile into the corresponding json
+	private String twitfileToJson(TwitterFile twitfile) {
+		return gson.toJson(twitfile);
+	}
+	
+	// turns json into a twitterFile
+	private TwitterFile jsonToTwitfile(String json){
+		return gson.fromJson(json, TwitterFile.class);
 	}
 
 	// return the contents of the recovery file as a map (filename -> json-encoded contents)
