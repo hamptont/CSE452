@@ -383,7 +383,7 @@ public class TwitterNode extends RIONode {
 
 		// initialize local variables
 		acked = new HashMap<Long, Boolean>();
-		seq_num = System.currentTimeMillis();    //TODO switch to util class
+		seq_num = System.currentTimeMillis();
 		tweets = new HashMap<String, String>();
 		pending_commands = new LinkedList<String>();
 		commandInProgress = 0;
@@ -533,7 +533,6 @@ public class TwitterNode extends RIONode {
                     twitFile.contents = fileMap;
                     String serialized = twitfileToJson(twitFile);
                     addToLog(filename, serialized);
-                    //TODO refactor into write log method
                     System.out.println("writing to file");
                     writer.write(serialized);
                     removeFromLog(filename);
@@ -693,8 +692,6 @@ public class TwitterNode extends RIONode {
          Add/delete a follower to/from a twitter stream
          Read all (unread) posts that a user is following
 
-        Server = 0
-		Client = 1
 	 */
 	private void onCommand_ordered(String command) {
 		String[] split = command.split("\\s");

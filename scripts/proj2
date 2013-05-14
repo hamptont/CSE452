@@ -15,3 +15,10 @@ time
 129 post hello3 from user2
 128 post hello3 from user1
 time
+128 add user1
+time
+128 read
+time
+128 logout user1
+129 logout user1
+time
