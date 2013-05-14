@@ -44,8 +44,6 @@ public class TwitterNode extends RIONode {
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
-	
-	private static final String FILE_VERSION_TAG = "file_version";
 
 	private static final String JSON_MSG = "msg";
 	private static final String JSON_REQUEST_ID = "request_id";
@@ -180,7 +178,7 @@ public class TwitterNode extends RIONode {
                         String json = requests.get(s);
                         Map<String, String> jsonMap = jsonToMap(json);
                         processTransaction(jsonMap, writeAheadLog);
-                        System.out.println("TRANSACTION BEING PROCESSED: " + json);
+                        System.out.println("TRANSACTION BEING ADDED TO WRITE AHEAD LOG: " + json);
                     }
 
                     //write transaction modifications to write ahead log
@@ -220,7 +218,7 @@ public class TwitterNode extends RIONode {
             } else if(command.equals(RPC_READ)){
                 //read request
                 //reads currently are processed right away, not stored in the transaction log
-                response = processTransaction(msgMap, null);
+                response = processTransaction(msgMap, new HashMap<String, String>());
             }else{
                 //write request
                 //store request in transaction map to be applied on commit
@@ -254,8 +252,6 @@ public class TwitterNode extends RIONode {
 		// for each operation, 
 		// make sure that the file version is consistent with the transaction
 		for(Entry<String, String> op : operations.entrySet()) {
-            System.out.println("client id: " + clientId);
-            System.out.println("command: " + op.getValue());
             Map<String,String> map = jsonToMap(op.getValue());
 
 			String command = map.get(JSON_MSG).split("\\s")[0];
@@ -443,18 +439,30 @@ public class TwitterNode extends RIONode {
      */
 	private String processTransaction(Map<String, String> msgMap, Map<String, String> writeAheadLog){
         String response = "";
-    //    PersistentStorageWriter writer = null;
 
         String received = msgMap.get(JSON_MSG);
         String request_id = msgMap.get(JSON_REQUEST_ID);
         String command = received.split("\\s")[0];
 
         String filename = "";
+        String fileContents = "";
         try{
             //All requests should have a filename except transactions
+            //try to read file if it exists
             filename =  received.split("\\s")[1];
-        }catch(Exception e){
 
+            //check to see if file has been modified and stored in write ahead log
+            if(writeAheadLog.containsKey(filename)){
+                //file has been modified during this transaction -- get modified file from write ahead log
+                fileContents = writeAheadLog.get(filename);
+            }else{
+                //file has not been modified during this transaction -- get file from disk
+                PersistentStorageReader in = super.getReader(filename);
+                fileContents = in.readLine();
+                in.close();
+            }
+        }catch(Exception e){
+            //No filename or file
         }
 
         if(command.equals(RPC_CREATE)) {
@@ -474,10 +482,8 @@ public class TwitterNode extends RIONode {
         } else if(command.equals(RPC_APPEND)) {
             try{
                 boolean append = false;
-                PersistentStorageReader in = super.getReader(filename);
-                TwitterFile twitFile = jsonToTwitfile(in.readLine());
+                TwitterFile twitFile = jsonToTwitfile(fileContents);
                 Map<String, String> fileMap = twitFile.contents;
-                in.close();
 
                 if(!fileMap.containsKey(request_id)){
                     //duplicate request
@@ -510,10 +516,9 @@ public class TwitterNode extends RIONode {
         } else if(command.equals(RPC_READ)) {
             try{
                 response += RPC_READ + " " + filename + " ";
-                PersistentStorageReader in = super.getReader(filename);
-                TwitterFile twitFile = jsonToTwitfile(in.readLine());
+                TwitterFile twitFile = jsonToTwitfile(fileContents);
+
                 Map<String, String> fileMap = twitFile.contents;
-                in.close();
 
                 String username = filename.split("-")[0];
                 for(String s : fileMap.keySet()){
@@ -531,9 +536,7 @@ public class TwitterNode extends RIONode {
             try{
                 //read in treemap from file
 
-                PersistentStorageReader in = super.getReader(filename);
-                Map<String, String> fileMap = jsonToMap(in.readLine());
-                in.close();
+                Map<String, String> fileMap = jsonToMap(fileContents);
 
                 String unfollow_username = received.substring(command.length() + filename.length() + 2);
                 if(fileMap.values().contains(unfollow_username)){
