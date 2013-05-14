@@ -90,6 +90,8 @@ public class TwitterNode extends RIONode {
 		// extract the sequence num from the message, update this node's seq_num
 		String json = packetBytesToString(msg);
 		Map<String, String> map = jsonToMap(json);
+
+
 		long remote_seq_num = Long.parseLong(map.get(JSON_CURRENT_SEQ_NUM));
 
 		// update the sequence number to be larger than any seen previously
@@ -412,7 +414,10 @@ public class TwitterNode extends RIONode {
                 boolean append = false;
                 writer = super.getWriter(filename, append);
                 TreeMap<String, String> fileMap = new TreeMap<String, String>();
-                writer.write(mapToJson(fileMap));
+                TwitterFile twitFile = new TwitterFile();
+                twitFile.fileVersion = Long.toString(seq_num);
+                twitFile.contents = fileMap;
+                writer.write(twitfileToJson(twitFile));
 
             }catch(Exception e){
                 e.printStackTrace();
@@ -422,17 +427,23 @@ public class TwitterNode extends RIONode {
             try{
                 boolean append = false;
                 PersistentStorageReader in = super.getReader(filename);
-                Map<String, String> fileMap = jsonToMap(in.readLine());
+                TwitterFile twitFile = jsonToTwitfile(in.readLine());
+                Map<String, String> fileMap = twitFile.contents;
                 in.close();
 
                 if(!fileMap.containsKey(request_id)){
                     //duplicate request
                     writer = super.getWriter(filename, append);
+
+                    twitFile = new TwitterFile();
+                    twitFile.fileVersion = Long.toString(seq_num);
+                    twitFile.contents = fileMap;
+
                     String tweet = received.substring(command.length() + filename.length() + 2);
                     fileMap.put(request_id, tweet);
 
                     //serialize object to json
-                    String serialized = mapToJson(fileMap);
+                    String serialized = twitfileToJson(twitFile);
 
                     System.out.println("writing to file");
                     addToLog(filename, serialized);
@@ -454,7 +465,8 @@ public class TwitterNode extends RIONode {
             try{
                 response += RPC_READ + " " + filename + " ";
                 PersistentStorageReader in = super.getReader(filename);
-                Map<String, String> fileMap = jsonToMap(in.readLine());
+                TwitterFile twitFile = jsonToTwitfile(in.readLine());
+                Map<String, String> fileMap = twitFile.contents;
                 in.close();
 
                 String username = filename.split("-")[0];
@@ -496,8 +508,12 @@ public class TwitterNode extends RIONode {
                     }
 
                     //serialize object
-                    String serialized = mapToJson(fileMap);
+                    TwitterFile twitFile = new TwitterFile();
+                    twitFile.fileVersion = Long.toString(seq_num);
+                    twitFile.contents = fileMap;
+                    String serialized = twitfileToJson(twitFile);
                     addToLog(filename, serialized);
+                    //TODO refactor into write log method
                     System.out.println("writing to file");
                     writer.write(serialized);
                     removeFromLog(filename);
@@ -569,7 +585,8 @@ public class TwitterNode extends RIONode {
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
 		return gson.fromJson(json, mapType);
 	}
-	
+
+
 	// turns a TwitterFile into the corresponding json
 	private String twitfileToJson(TwitterFile twitfile) {
 		return gson.toJson(twitfile);
@@ -772,7 +789,8 @@ public class TwitterNode extends RIONode {
 		json_map.put(JSON_TRANSACTION_ID, transaction_id);
 
 		String json = mapToJson(json_map);
-		RIOSend(node, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
+
+        RIOSend(node, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
 		System.out.println("done sending");
 	}
 
