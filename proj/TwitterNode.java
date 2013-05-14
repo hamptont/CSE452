@@ -44,8 +44,6 @@ public class TwitterNode extends RIONode {
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
-	
-	private static final String FILE_VERSION_TAG = "file_version";
 
 	private static final String JSON_MSG = "msg";
 	private static final String JSON_REQUEST_ID = "request_id";
@@ -173,12 +171,41 @@ public class TwitterNode extends RIONode {
                 }else{
                     response = RPC_COMMIT;
                     //process the actual commands
+
+                    //write each change to the write ahead log
+                    Map<String, String> writeAheadLog = new TreeMap<String, String>();
                     for(String s : requests.keySet()){
                         String json = requests.get(s);
                         Map<String, String> jsonMap = jsonToMap(json);
-                        processTransaction(jsonMap);
-                        System.out.println("TRANSACTION BEING PROCESSED: " + json);
+                        processTransaction(jsonMap, writeAheadLog);
+                        System.out.println("TRANSACTION BEING ADDED TO WRITE AHEAD LOG: " + json);
                     }
+
+                    //write transaction modifications to write ahead log
+                    try{
+                        writeFile(RECOVERY_FILENAME, writeAheadLog);
+                    }catch(IOException e){
+
+                    }
+
+                    response_map.put(JSON_MSG, response);
+
+                    //All transaction modifications have been applied to write ahead log
+                    //Okay to send commit success to client
+                    System.out.println("Server sending response: " + response_map);
+                    RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
+
+                    //move modified files from write ahead log to disk
+                    readRecoveryFileAndApplyChanges();
+
+                    //Write empty temp file to clear out write ahead log
+                    try{
+                        writeToRecovery(new TreeMap<String,  String>());
+                    }catch(IOException e){
+
+                    }
+
+                    return;
                 }
             }
         } else {
@@ -191,7 +218,7 @@ public class TwitterNode extends RIONode {
             } else if(command.equals(RPC_READ)){
                 //read request
                 //reads currently are processed right away, not stored in the transaction log
-                response = processTransaction(msgMap);
+                response = processTransaction(msgMap, new HashMap<String, String>());
             }else{
                 //write request
                 //store request in transaction map to be applied on commit
@@ -225,8 +252,6 @@ public class TwitterNode extends RIONode {
 		// for each operation, 
 		// make sure that the file version is consistent with the transaction
 		for(Entry<String, String> op : operations.entrySet()) {
-            System.out.println("client id: " + clientId);
-            System.out.println("command: " + op.getValue());
             Map<String,String> map = jsonToMap(op.getValue());
 
 			String command = map.get(JSON_MSG).split("\\s")[0];
@@ -383,7 +408,7 @@ public class TwitterNode extends RIONode {
 
 		// initialize local variables
 		acked = new HashMap<Long, Boolean>();
-		seq_num = System.currentTimeMillis();    //TODO switch to util class
+		seq_num = System.currentTimeMillis();
 		tweets = new HashMap<String, String>();
 		pending_commands = new LinkedList<String>();
 		commandInProgress = 0;
@@ -412,32 +437,43 @@ public class TwitterNode extends RIONode {
      *
      * Processes exactly one RCP call - should be called multiple tiems for each command in the transaction.
      */
-	private String processTransaction(Map<String, String> msgMap){
+	private String processTransaction(Map<String, String> msgMap, Map<String, String> writeAheadLog){
         String response = "";
-        PersistentStorageWriter writer = null;
 
         String received = msgMap.get(JSON_MSG);
         String request_id = msgMap.get(JSON_REQUEST_ID);
         String command = received.split("\\s")[0];
 
         String filename = "";
+        String fileContents = "";
         try{
             //All requests should have a filename except transactions
+            //try to read file if it exists
             filename =  received.split("\\s")[1];
-        }catch(Exception e){
 
+            //check to see if file has been modified and stored in write ahead log
+            if(writeAheadLog.containsKey(filename)){
+                //file has been modified during this transaction -- get modified file from write ahead log
+                fileContents = writeAheadLog.get(filename);
+            }else{
+                //file has not been modified during this transaction -- get file from disk
+                PersistentStorageReader in = super.getReader(filename);
+                fileContents = in.readLine();
+                in.close();
+            }
+        }catch(Exception e){
+            //No filename or file
         }
 
         if(command.equals(RPC_CREATE)) {
             response += STATUS_SUCCESS;
             try{
                 boolean append = false;
-                writer = super.getWriter(filename, append);
                 TreeMap<String, String> fileMap = new TreeMap<String, String>();
                 TwitterFile twitFile = new TwitterFile();
                 twitFile.fileVersion = Long.toString(seq_num);
                 twitFile.contents = fileMap;
-                writer.write(twitfileToJson(twitFile));
+                writeAheadLog.put(filename, twitfileToJson(twitFile));
 
             }catch(Exception e){
                 e.printStackTrace();
@@ -446,14 +482,11 @@ public class TwitterNode extends RIONode {
         } else if(command.equals(RPC_APPEND)) {
             try{
                 boolean append = false;
-                PersistentStorageReader in = super.getReader(filename);
-                TwitterFile twitFile = jsonToTwitfile(in.readLine());
+                TwitterFile twitFile = jsonToTwitfile(fileContents);
                 Map<String, String> fileMap = twitFile.contents;
-                in.close();
 
                 if(!fileMap.containsKey(request_id)){
                     //duplicate request
-                    writer = super.getWriter(filename, append);
 
                     twitFile = new TwitterFile();
                     twitFile.fileVersion = Long.toString(seq_num);
@@ -467,8 +500,7 @@ public class TwitterNode extends RIONode {
 
                     System.out.println("writing to file");
                     addToLog(filename, serialized);
-                    writer.write(serialized);
-                    removeFromLog(filename);
+                    writeAheadLog.put(filename, serialized);
                 } else {
                     System.out.println("Append not processed, timestamp already exists: " + received);
                 }
@@ -484,10 +516,9 @@ public class TwitterNode extends RIONode {
         } else if(command.equals(RPC_READ)) {
             try{
                 response += RPC_READ + " " + filename + " ";
-                PersistentStorageReader in = super.getReader(filename);
-                TwitterFile twitFile = jsonToTwitfile(in.readLine());
+                TwitterFile twitFile = jsonToTwitfile(fileContents);
+
                 Map<String, String> fileMap = twitFile.contents;
-                in.close();
 
                 String username = filename.split("-")[0];
                 for(String s : fileMap.keySet()){
@@ -505,11 +536,8 @@ public class TwitterNode extends RIONode {
             try{
                 //read in treemap from file
 
-                PersistentStorageReader in = super.getReader(filename);
-                Map<String, String> fileMap = jsonToMap(in.readLine());
-                in.close();
+                Map<String, String> fileMap = jsonToMap(fileContents);
 
-                writer = super.getWriter(filename, false);
                 String unfollow_username = received.substring(command.length() + filename.length() + 2);
                 if(fileMap.values().contains(unfollow_username)){
                     //remove user
@@ -532,11 +560,7 @@ public class TwitterNode extends RIONode {
                     twitFile.fileVersion = Long.toString(seq_num);
                     twitFile.contents = fileMap;
                     String serialized = twitfileToJson(twitFile);
-                    addToLog(filename, serialized);
-                    //TODO refactor into write log method
-                    System.out.println("writing to file");
-                    writer.write(serialized);
-                    removeFromLog(filename);
+                    writeAheadLog.put(filename, serialized);
                 }
 
                 //debug
@@ -551,13 +575,6 @@ public class TwitterNode extends RIONode {
         }
         
         // close the storage writer, if one was opened
-        if(writer != null){
-            try{
-                writer.close();
-            }catch(Exception e){
-
-            }
-        }
         return response;
     }
 
@@ -693,8 +710,6 @@ public class TwitterNode extends RIONode {
          Add/delete a follower to/from a twitter stream
          Read all (unread) posts that a user is following
 
-        Server = 0
-		Client = 1
 	 */
 	private void onCommand_ordered(String command) {
 		String[] split = command.split("\\s");
