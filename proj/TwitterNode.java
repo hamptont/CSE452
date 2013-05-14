@@ -146,24 +146,36 @@ public class TwitterNode extends RIONode {
                 //need to start transaction
                 response = RPC_ABORT;
             } else {
-                Random r = new Random();
-                boolean abort = r.nextInt() % 3 == 0;
-                //TODO Currently randomly aborts some transactions to test abort/commit logic
-                if(abort){
-                    response = RPC_ABORT;
+                Map<String, String> requests =  transaction.rid_action_map;
 
-                } else {
-                    //TODO: check if transaction needs to be aborted
-                    Map<String, String> requests =  transaction.rid_action_map;
-                    for(String s : requests.keySet()){
-                        String json = requests.get(s);
-                        Map<String, String> jsonMap = jsonToMap(json);
-                        processTransaction(jsonMap);
-                        System.out.println("TRANSACTION BEING PROCESSED: " + json);
+
+                //TODO: check if transaction needs to be aborted
+                boolean abort = false;
+                for(String s : requests.keySet()){
+                    String json = requests.get(s);
+                    Map<String, String> jsonMap = jsonToMap(json);
+                    //TODO CHECK TO SEE IF TRANSACTION NEEDS TO BE ABORTED
+                    boolean need_to_abort = false; //TODO
+                    if(need_to_abort){
+                        abort = true;
                     }
 
+                }
+
+                //process the actual commands
+                for(String s : requests.keySet()){
+                    String json = requests.get(s);
+                    Map<String, String> jsonMap = jsonToMap(json);
+                    processTransaction(jsonMap);
+                    System.out.println("TRANSACTION BEING PROCESSED: " + json);
+                }
+
+                if(abort){
+                    response = RPC_ABORT;
+                }else{
                     response = RPC_COMMIT;
                 }
+
             }
         } else {
             //regular twitter command
