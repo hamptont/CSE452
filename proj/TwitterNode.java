@@ -21,7 +21,7 @@ public class TwitterNode extends RIONode {
 
 	private long seq_num;
 	private Queue<String> pending_commands;
-    private Queue<String> active_commands;
+	private Queue<String> active_commands;
 	private int commandInProgress;
 
 	private String username;
@@ -30,17 +30,19 @@ public class TwitterNode extends RIONode {
 	private Gson gson;
 	private String transaction_id;
 
-    private Map<String, TransactionState> transactionStateMap;
-    
-    private Map<Integer, TransactionData> clientMap;
+	private Map<String, TransactionState> transactionStateMap;
 
-    /**
-     * String constants
-     */
+	private Map<Integer, TransactionData> clientMap;
+	
+	private String role;
 
-    private static final int NUM_SERVER_NODES = 128;
+	/**
+	 * String constants
+	 */
 
-    private static final String TWEET_FILE_SUFFIX = "-tweets";
+	private static final int NUM_SERVER_NODES = 128;
+
+	private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
@@ -57,33 +59,39 @@ public class TwitterNode extends RIONode {
 
 	private static final String RPC_START_TXN = "start_transaction";
 	private static final String RPC_COMMIT = "commit";
-    private static final String RPC_ABORT = "abort";
+	private static final String RPC_ABORT = "abort";
 	private static final String RPC_READ = "read";
 	private static final String RPC_APPEND = "append";
 	private static final String RPC_DELETE = "delete";
 	private static final String RPC_CREATE = "create";
 	private static final String STATUS_SUCCESS = "success";
+
+	private static final String ASSIGN_ROLE_COMMAND = "assign";
+	private static final String SERVER_NODE_ROLE = "server";
+	private static final String PAXOS_NODE_ROLE = "paxos";
+	private static final String CLIENT_NODE_ROLE = "client";
+
 	
 	/**
 	 * Private helper classes
 	 */
 
-    private enum TransactionState {
-        COMMITTED,
-        IN_PROGRESS,
-        ABORTED
-    }   
+	private enum TransactionState {
+		COMMITTED,
+		IN_PROGRESS,
+		ABORTED
+	}   
 
-    private class TransactionData {
-        public String tid;
-        public String rid;
-        public Map<String, String> rid_action_map;
-    }
-    
-    private class TwitterFile {
-    	public String fileVersion;
-    	public Map<String, String> contents;
-    }
+	private class TransactionData {
+		public String tid;
+		public String rid;
+		public Map<String, String> rid_action_map;
+	}
+
+	private class TwitterFile {
+		public String fileVersion;
+		public Map<String, String> contents;
+	}
 
 	@Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
@@ -108,9 +116,9 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
-    /*
-     * RIOReceive method for server
-     */
+	/*
+	 * RIOReceive method for server
+	 */
 	private void processMessageAsServer(byte[] msg, int client_id) {
 		String msgJson = packetBytesToString(msg);
 		Map<String, String> msgMap = jsonToMap(msgJson);
@@ -136,127 +144,127 @@ public class TwitterNode extends RIONode {
 			response = RPC_ABORT;
 		} else if(command.equals(RPC_START_TXN)){
 			//request to start a transaction
-            TransactionData transaction = clientMap.get(client_id);
-            if(transaction != null && transaction.rid.equals(request_id)){
-                //transaction already started -- duplicate message
-                //return transaction ID of current transaction
-                response_map.put(JSON_TRANSACTION_ID, transaction.tid);
-            } else {
-                //set up transaction start
-                response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
-                transaction = new TransactionData();
-                transaction.tid = Long.toString(seq_num);
-                transaction.rid = request_id;
-                transaction.rid_action_map = new TreeMap<String, String>();
-                clientMap.put(client_id, transaction);
-                transactionStateMap.put(transaction.tid, TransactionState.IN_PROGRESS);
-            }
+			TransactionData transaction = clientMap.get(client_id);
+			if(transaction != null && transaction.rid.equals(request_id)){
+				//transaction already started -- duplicate message
+				//return transaction ID of current transaction
+				response_map.put(JSON_TRANSACTION_ID, transaction.tid);
+			} else {
+				//set up transaction start
+				response_map.put(JSON_TRANSACTION_ID, Long.toString(seq_num));
+				transaction = new TransactionData();
+				transaction.tid = Long.toString(seq_num);
+				transaction.rid = request_id;
+				transaction.rid_action_map = new TreeMap<String, String>();
+				clientMap.put(client_id, transaction);
+				transactionStateMap.put(transaction.tid, TransactionState.IN_PROGRESS);
+			}
 
 			response = RPC_START_TXN;
 
-        } else if(command.equals(RPC_COMMIT)) {
-            //request to commit transaction
-            TransactionData transaction = clientMap.get(client_id);
-            if(transaction == null){
-                //no active transaction
-                //need to start transaction
-                response = RPC_ABORT;
-            } else {
-                Map<String, String> requests =  transaction.rid_action_map;
+		} else if(command.equals(RPC_COMMIT)) {
+			//request to commit transaction
+			TransactionData transaction = clientMap.get(client_id);
+			if(transaction == null){
+				//no active transaction
+				//need to start transaction
+				response = RPC_ABORT;
+			} else {
+				Map<String, String> requests =  transaction.rid_action_map;
 
-                boolean abort = txnMustAbort(client_id);
+				boolean abort = txnMustAbort(client_id);
 
-                if(abort){
-                    response = RPC_ABORT;
-                }else{
-                    response = RPC_COMMIT;
-                    //process the actual commands
+				if(abort){
+					response = RPC_ABORT;
+				}else{
+					response = RPC_COMMIT;
+					//process the actual commands
 
-                    //write each change to the write ahead log
-                    Map<String, String> writeAheadLog = new TreeMap<String, String>();
-                    for(String s : requests.keySet()){
-                        String json = requests.get(s);
-                        Map<String, String> jsonMap = jsonToMap(json);
-                        processTransaction(jsonMap, writeAheadLog);
-                        System.out.println("TRANSACTION BEING ADDED TO WRITE AHEAD LOG: " + json);
-                    }
+					//write each change to the write ahead log
+					Map<String, String> writeAheadLog = new TreeMap<String, String>();
+					for(String s : requests.keySet()){
+						String json = requests.get(s);
+						Map<String, String> jsonMap = jsonToMap(json);
+						processTransaction(jsonMap, writeAheadLog);
+						System.out.println("TRANSACTION BEING ADDED TO WRITE AHEAD LOG: " + json);
+					}
 
-                    //write transaction modifications to write ahead log
-                    try{
-                        writeFile(RECOVERY_FILENAME, writeAheadLog);
-                    }catch(IOException e){
+					//write transaction modifications to write ahead log
+					try{
+						writeFile(RECOVERY_FILENAME, writeAheadLog);
+					}catch(IOException e){
 
-                    }
+					}
 
-                    response_map.put(JSON_MSG, response);
+					response_map.put(JSON_MSG, response);
 
-                    //All transaction modifications have been applied to write ahead log
-                    //Okay to send commit success to client
-                    System.out.println("Server sending response: " + response_map);
-                    RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
+					//All transaction modifications have been applied to write ahead log
+					//Okay to send commit success to client
+					System.out.println("Server sending response: " + response_map);
+					RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
 
-                    //move modified files from write ahead log to disk
-                    readRecoveryFileAndApplyChanges();
+					//move modified files from write ahead log to disk
+					readRecoveryFileAndApplyChanges();
 
-                    //Write empty temp file to clear out write ahead log
-                    try{
-                        writeToRecovery(new TreeMap<String,  String>());
-                    }catch(IOException e){
+					//Write empty temp file to clear out write ahead log
+					try{
+						writeToRecovery(new TreeMap<String,  String>());
+					}catch(IOException e){
 
-                    }
+					}
 
-                    return;
-                }
-            }
-        } else {
-            //regular twitter command
-            TransactionData transaction = clientMap.get(client_id);
-            if(transaction == null){
-                //no active transaction
-                //need to start transaction
-                response = RPC_ABORT;
-            } else if(command.equals(RPC_READ)){
-                //read request
-                //reads currently are processed right away, not stored in the transaction log
-                response = processTransaction(msgMap, new HashMap<String, String>());
-            }else{
-                //write request
-                //store request in transaction map to be applied on commit
-                transaction.rid_action_map.put(request_id, msgJson);
-            }
-        }
+					return;
+				}
+			}
+		} else {
+			//regular twitter command
+			TransactionData transaction = clientMap.get(client_id);
+			if(transaction == null){
+				//no active transaction
+				//need to start transaction
+				response = RPC_ABORT;
+			} else if(command.equals(RPC_READ)){
+				//read request
+				//reads currently are processed right away, not stored in the transaction log
+				response = processTransaction(msgMap, new HashMap<String, String>());
+			}else{
+				//write request
+				//store request in transaction map to be applied on commit
+				transaction.rid_action_map.put(request_id, msgJson);
+			}
+		}
 
-        //Check to see if we already finished our commit
-        if(!response.equals(RPC_COMMIT)){
-            boolean abort = txnMustAbort(client_id);
-            if(abort){
-                response = RPC_ABORT;
-            }
-        }
+		//Check to see if we already finished our commit
+		if(!response.equals(RPC_COMMIT)){
+			boolean abort = txnMustAbort(client_id);
+			if(abort){
+				response = RPC_ABORT;
+			}
+		}
 
-        response_map.put(JSON_MSG, response);
+		response_map.put(JSON_MSG, response);
 
-        System.out.println("Server sending response: " + response_map);
+		System.out.println("Server sending response: " + response_map);
 		RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map).getBytes());
-    }
-	
+	}
+
 	private boolean txnMustAbort(int clientId) {
 		TransactionData transaction = clientMap.get(clientId);
 		String txnId = transaction.tid;
 		Map<String, String> operations = transaction.rid_action_map;
-		
+
 		// to keep track of which files will be wholly deleted/made in this txn
 		Set<String> deletedFiles = new TreeSet<String>();
 		Set<String> newlyCreatedFiles = new TreeSet<String>();
-		
+
 		// for each operation, 
 		// make sure that the file version is consistent with the transaction
 		for(Entry<String, String> op : operations.entrySet()) {
-            Map<String,String> map = jsonToMap(op.getValue());
+			Map<String,String> map = jsonToMap(op.getValue());
 
 			String command = map.get(JSON_MSG).split("\\s")[0];
 			String filename = map.get(JSON_MSG).split("\\s")[1];
-			
+
 			if(command.equals(RPC_APPEND) || command.equals(RPC_READ)) {
 				if(!newlyCreatedFiles.contains(filename)) {
 					// if the existing file is the one being used
@@ -264,18 +272,18 @@ public class TwitterNode extends RIONode {
 						PersistentStorageReader reader = super.getReader(filename);
 						String json = reader.readLine();
 						TwitterFile file = jsonToTwitfile(json);
-						
+
 						if(txnId.compareTo(file.fileVersion) < 0) {
 							// if the transactionId is less than the file version,
 							// the file has been written and we need to abort
-                            System.out.println("transaction aborted~");
+							System.out.println("transaction aborted~");
 							return true;
 						}
-						
+
 					} catch (FileNotFoundException e) {
 						// if the file is deleted, txn must abort
-                        System.out.println("transaction aborted~");
-                        return true;
+						System.out.println("transaction aborted~");
+						return true;
 					} catch (IOException e) {
 						throw new RuntimeException("Could not read file: "+filename,e);
 					}
@@ -286,26 +294,26 @@ public class TwitterNode extends RIONode {
 					deletedFiles.remove(filename);
 					newlyCreatedFiles.add(filename);
 				} else {
-                    try {
-                        PersistentStorageReader reader = super.getReader(filename);
-                        String json = reader.readLine();
-                        TwitterFile file = jsonToTwitfile(json);
+					try {
+						PersistentStorageReader reader = super.getReader(filename);
+						String json = reader.readLine();
+						TwitterFile file = jsonToTwitfile(json);
 
-                        if(json != null && txnId.compareTo(file.fileVersion) < 0) {
-                            // if the transactionId is less than the file version,
-                            // the file has been written and we need to abort
-                            System.out.println("transaction aborted~");
-                            return true;
-                        } else {
-                            newlyCreatedFiles.add(filename);
-                        }
-                    } catch (FileNotFoundException e) {
-                        // file doesn't exist, okay to create file
-                        newlyCreatedFiles.add(filename);
-                    } catch (IOException e) {
-                        throw new RuntimeException("Could not read file: "+filename,e);
-                    }
-                }
+						if(json != null && txnId.compareTo(file.fileVersion) < 0) {
+							// if the transactionId is less than the file version,
+							// the file has been written and we need to abort
+							System.out.println("transaction aborted~");
+							return true;
+						} else {
+							newlyCreatedFiles.add(filename);
+						}
+					} catch (FileNotFoundException e) {
+						// file doesn't exist, okay to create file
+						newlyCreatedFiles.add(filename);
+					} catch (IOException e) {
+						throw new RuntimeException("Could not read file: "+filename,e);
+					}
+				}
 			} else if (command.equals(RPC_DELETE)) {
 				if(newlyCreatedFiles.contains(filename)) {
 					// we created this file, ok to remove
@@ -316,33 +324,33 @@ public class TwitterNode extends RIONode {
 						PersistentStorageReader reader = super.getReader(filename);
 						String json = reader.readLine();
 						TwitterFile file = jsonToTwitfile(json);
-						
+
 						if(txnId.compareTo(file.fileVersion) < 0) {
 							// if the transactionId is less than the file version,
 							// the file has been written and we need to abort
-                            System.out.println("transaction aborted~");
-                            return true;
+							System.out.println("transaction aborted~");
+							return true;
 						} else {
 							deletedFiles.add(filename);
 						}
 					} catch (FileNotFoundException e) {
 						// file doesn't exist anymore, can't delete it!
-                        System.out.println("transaction aborted~");
-                        return true;
+						System.out.println("transaction aborted~");
+						return true;
 					} catch (IOException e) {
 						throw new RuntimeException("Could not read file: " + filename,e);
 					}
 				}
 			}
 		}
-		
+
 		// everything ok!
 		return false;
 	}
 
-    /*
-     *  RIOReceive for client
-     */
+	/*
+	 *  RIOReceive for client
+	 */
 	private void processMessageAsClient(byte[] msg) {		
 		String json = packetBytesToString(msg);
 		Map<String, String> map = jsonToMap(json);
@@ -356,15 +364,15 @@ public class TwitterNode extends RIONode {
 		if(command.equals(RPC_START_TXN)){
 			// we've received our transaction ID
 			transaction_id = map.get(JSON_TRANSACTION_ID);
-            transactionStateMap.put(transaction_id, TransactionState.IN_PROGRESS);
+			transactionStateMap.put(transaction_id, TransactionState.IN_PROGRESS);
 		}else if(command.equals(RPC_COMMIT)){
 			// we've received the confirmation of a transaction
 			//transaction_id = INVALID_TID;
-            transactionStateMap.put(transaction_id, TransactionState.COMMITTED);
-        }else if(command.equals(RPC_ABORT)){
-            transactionStateMap.put(transaction_id, TransactionState.ABORTED);
+			transactionStateMap.put(transaction_id, TransactionState.COMMITTED);
+		}else if(command.equals(RPC_ABORT)){
+			transactionStateMap.put(transaction_id, TransactionState.ABORTED);
 
-        }else if(command.equals(RPC_READ)){
+		}else if(command.equals(RPC_READ)){
 			//read response
 			//check if it is a read of a '-following' file or '-tweets'
 			String filename = received.split("\\s")[1];
@@ -414,11 +422,11 @@ public class TwitterNode extends RIONode {
 		commandInProgress = 0;
 		gson = new Gson();
 		transaction_id = INVALID_TID;
-        transactionStateMap = new TreeMap<String, TransactionState>();
-        active_commands = new LinkedList<String>();
-        clientMap = new TreeMap<Integer, TransactionData>();
+		transactionStateMap = new TreeMap<String, TransactionState>();
+		active_commands = new LinkedList<String>();
+		clientMap = new TreeMap<Integer, TransactionData>();
 
-        // finish writing files, if necessary
+		// finish writing files, if necessary
 
 		readRecoveryFileAndApplyChanges();
 
@@ -430,165 +438,165 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
-    /*
-     * This method actually applies the twitter command to disk.
-     * Should only be called after the transaction has been committed
-     * and all commands in the transaction as been checked to see if they need to be aborted
-     *
-     * Processes exactly one RCP call - should be called multiple tiems for each command in the transaction.
-     */
+	/*
+	 * This method actually applies the twitter command to disk.
+	 * Should only be called after the transaction has been committed
+	 * and all commands in the transaction as been checked to see if they need to be aborted
+	 *
+	 * Processes exactly one RCP call - should be called multiple tiems for each command in the transaction.
+	 */
 	private String processTransaction(Map<String, String> msgMap, Map<String, String> writeAheadLog){
-        String response = "";
+		String response = "";
 
-        String received = msgMap.get(JSON_MSG);
-        String request_id = msgMap.get(JSON_REQUEST_ID);
-        String command = received.split("\\s")[0];
+		String received = msgMap.get(JSON_MSG);
+		String request_id = msgMap.get(JSON_REQUEST_ID);
+		String command = received.split("\\s")[0];
 
-        String filename = "";
-        String fileContents = "";
-        try{
-            //All requests should have a filename except transactions
-            //try to read file if it exists
-            filename =  received.split("\\s")[1];
+		String filename = "";
+		String fileContents = "";
+		try{
+			//All requests should have a filename except transactions
+			//try to read file if it exists
+			filename =  received.split("\\s")[1];
 
-            //check to see if file has been modified and stored in write ahead log
-            if(writeAheadLog.containsKey(filename)){
-                //file has been modified during this transaction -- get modified file from write ahead log
-                fileContents = writeAheadLog.get(filename);
-            }else{
-                //file has not been modified during this transaction -- get file from disk
-                PersistentStorageReader in = super.getReader(filename);
-                fileContents = in.readLine();
-                in.close();
-            }
-        }catch(Exception e){
-            //No filename or file
-        }
+			//check to see if file has been modified and stored in write ahead log
+			if(writeAheadLog.containsKey(filename)){
+				//file has been modified during this transaction -- get modified file from write ahead log
+				fileContents = writeAheadLog.get(filename);
+			}else{
+				//file has not been modified during this transaction -- get file from disk
+				PersistentStorageReader in = super.getReader(filename);
+				fileContents = in.readLine();
+				in.close();
+			}
+		}catch(Exception e){
+			//No filename or file
+		}
 
-        if(command.equals(RPC_CREATE)) {
-            response += STATUS_SUCCESS;
-            try{
-                boolean append = false;
-                TreeMap<String, String> fileMap = new TreeMap<String, String>();
-                TwitterFile twitFile = new TwitterFile();
-                twitFile.fileVersion = Long.toString(seq_num);
-                twitFile.contents = fileMap;
-                writeAheadLog.put(filename, twitfileToJson(twitFile));
+		if(command.equals(RPC_CREATE)) {
+			response += STATUS_SUCCESS;
+			try{
+				boolean append = false;
+				TreeMap<String, String> fileMap = new TreeMap<String, String>();
+				TwitterFile twitFile = new TwitterFile();
+				twitFile.fileVersion = Long.toString(seq_num);
+				twitFile.contents = fileMap;
+				writeAheadLog.put(filename, twitfileToJson(twitFile));
 
-            }catch(Exception e){
-                e.printStackTrace();
-            }
+			}catch(Exception e){
+				e.printStackTrace();
+			}
 
-        } else if(command.equals(RPC_APPEND)) {
-            try{
-                boolean append = false;
-                TwitterFile twitFile = jsonToTwitfile(fileContents);
-                Map<String, String> fileMap = twitFile.contents;
+		} else if(command.equals(RPC_APPEND)) {
+			try{
+				boolean append = false;
+				TwitterFile twitFile = jsonToTwitfile(fileContents);
+				Map<String, String> fileMap = twitFile.contents;
 
-                if(!fileMap.containsKey(request_id)){
-                    //duplicate request
+				if(!fileMap.containsKey(request_id)){
+					//duplicate request
 
-                    twitFile = new TwitterFile();
-                    twitFile.fileVersion = Long.toString(seq_num);
-                    twitFile.contents = fileMap;
+					twitFile = new TwitterFile();
+					twitFile.fileVersion = Long.toString(seq_num);
+					twitFile.contents = fileMap;
 
-                    String tweet = received.substring(command.length() + filename.length() + 2);
-                    fileMap.put(request_id, tweet);
+					String tweet = received.substring(command.length() + filename.length() + 2);
+					fileMap.put(request_id, tweet);
 
-                    //serialize object to json
-                    String serialized = twitfileToJson(twitFile);
+					//serialize object to json
+					String serialized = twitfileToJson(twitFile);
 
-                    System.out.println("writing to file");
-                    addToLog(filename, serialized);
-                    writeAheadLog.put(filename, serialized);
-                } else {
-                    System.out.println("Append not processed, timestamp already exists: " + received);
-                }
+					System.out.println("writing to file");
+					addToLog(filename, serialized);
+					writeAheadLog.put(filename, serialized);
+				} else {
+					System.out.println("Append not processed, timestamp already exists: " + received);
+				}
 
-                //debug
-                System.out.println("MAP VALUES (append): ");
-                System.out.println(fileMap.values());
-            }catch(Exception e){
-                System.out.println();
-                e.printStackTrace();
-            }
-            response += STATUS_SUCCESS;
-        } else if(command.equals(RPC_READ)) {
-            try{
-                response += RPC_READ + " " + filename + " ";
-                TwitterFile twitFile = jsonToTwitfile(fileContents);
+				//debug
+				System.out.println("MAP VALUES (append): ");
+				System.out.println(fileMap.values());
+			}catch(Exception e){
+				System.out.println();
+				e.printStackTrace();
+			}
+			response += STATUS_SUCCESS;
+		} else if(command.equals(RPC_READ)) {
+			try{
+				response += RPC_READ + " " + filename + " ";
+				TwitterFile twitFile = jsonToTwitfile(fileContents);
 
-                Map<String, String> fileMap = twitFile.contents;
+				Map<String, String> fileMap = twitFile.contents;
 
-                String username = filename.split("-")[0];
-                for(String s : fileMap.keySet()){
-                    //return values -- username of people you are following
-                    response += s + username + " " + fileMap.get(s) + "\n";
-                }
-                response = response.trim();
-            }catch(Exception e){
+				String username = filename.split("-")[0];
+				for(String s : fileMap.keySet()){
+					//return values -- username of people you are following
+					response += s + username + " " + fileMap.get(s) + "\n";
+				}
+				response = response.trim();
+			}catch(Exception e){
 
-            }
-        } else if(command.equals(RPC_DELETE)){
-            //Removing followers from "-followers" file
-            //If user is not currently being followed -- does nothing
-            //If user is being followed multiple times -- removes all ocurences
-            try{
-                //read in treemap from file
+			}
+		} else if(command.equals(RPC_DELETE)){
+			//Removing followers from "-followers" file
+			//If user is not currently being followed -- does nothing
+			//If user is being followed multiple times -- removes all ocurences
+			try{
+				//read in treemap from file
 
-                Map<String, String> fileMap = jsonToMap(fileContents);
+				Map<String, String> fileMap = jsonToMap(fileContents);
 
-                String unfollow_username = received.substring(command.length() + filename.length() + 2);
-                if(fileMap.values().contains(unfollow_username)){
-                    //remove user
-                    Set<String> keysToRemove = new HashSet<String>();
-                    for (Map.Entry<String,String> entry : fileMap.entrySet()) {
-                        String key = entry.getKey();
-                        String value = entry.getValue();
-                        if(value.equals(unfollow_username)){
-                            keysToRemove.add(key);
-                        }
-                    }
+				String unfollow_username = received.substring(command.length() + filename.length() + 2);
+				if(fileMap.values().contains(unfollow_username)){
+					//remove user
+					Set<String> keysToRemove = new HashSet<String>();
+					for (Map.Entry<String,String> entry : fileMap.entrySet()) {
+						String key = entry.getKey();
+						String value = entry.getValue();
+						if(value.equals(unfollow_username)){
+							keysToRemove.add(key);
+						}
+					}
 
-                    //Can't modify map while iterating -- make modifications after
-                    for(String key : keysToRemove){
-                        fileMap.remove(key);
-                    }
+					//Can't modify map while iterating -- make modifications after
+					for(String key : keysToRemove){
+						fileMap.remove(key);
+					}
 
-                    //serialize object
-                    TwitterFile twitFile = new TwitterFile();
-                    twitFile.fileVersion = Long.toString(seq_num);
-                    twitFile.contents = fileMap;
-                    String serialized = twitfileToJson(twitFile);
-                    writeAheadLog.put(filename, serialized);
-                }
+					//serialize object
+					TwitterFile twitFile = new TwitterFile();
+					twitFile.fileVersion = Long.toString(seq_num);
+					twitFile.contents = fileMap;
+					String serialized = twitfileToJson(twitFile);
+					writeAheadLog.put(filename, serialized);
+				}
 
-                //debug
-                System.out.println("MAP VALUES (remove): ");
-                System.out.println(fileMap.values());
-            }catch(Exception e){
-                e.printStackTrace();
-            }
-            response += STATUS_SUCCESS;
-        }else{
-            response += "unknown command: " + command;
-        }
-        
-        // close the storage writer, if one was opened
-        return response;
-    }
+				//debug
+				System.out.println("MAP VALUES (remove): ");
+				System.out.println(fileMap.values());
+			}catch(Exception e){
+				e.printStackTrace();
+			}
+			response += STATUS_SUCCESS;
+		}else{
+			response += "unknown command: " + command;
+		}
+
+		// close the storage writer, if one was opened
+		return response;
+	}
 
 
 	/*
 	 * File manipulation methods
 	 */
-	
+
 
 	//Read recovery file and write modifications
 	private void readRecoveryFileAndApplyChanges() {		
 		try {
 			Map<String, String> recoveryMap = getRecoveryMap();
-			
+
 			for(Entry<String, String> file : recoveryMap.entrySet()) {
 				writeFile(file.getKey(), file.getValue());
 			}			
@@ -603,7 +611,7 @@ public class TwitterNode extends RIONode {
 		byte_writer.write(contents);
 		byte_writer.close();
 	}
-	
+
 	// write the map to the specified file
 	private void writeFile(String filename, Map<String, String> contents) throws IOException {
 		String jsonMap = mapToJson(contents);
@@ -627,7 +635,7 @@ public class TwitterNode extends RIONode {
 	private String twitfileToJson(TwitterFile twitfile) {
 		return gson.toJson(twitfile);
 	}
-	
+
 	// turns json into a twitterFile
 	private TwitterFile jsonToTwitfile(String json){
 		return gson.fromJson(json, TwitterFile.class);
@@ -682,23 +690,45 @@ public class TwitterNode extends RIONode {
 			e.printStackTrace();
 		}
 	}
-	
-	
+
+
 	/*
 	 * COMMAND METHODS
 	 * methods used to accept commands from the simulator
 	 */
 
+	private boolean isValidRole(String proposedRole) {
+		return CLIENT_NODE_ROLE.equals(proposedRole) || SERVER_NODE_ROLE.equals(proposedRole) || PAXOS_NODE_ROLE.equals(proposedRole);
+	}
 
 	@Override
-	public void onCommand(String command){
-		if(pending_commands.isEmpty()){
-			// start a command tick if necessary
-			callback("commandTickCallback", new String[0], new Object[0]);
-		}
+	public void onCommand(String command){		
+		String[] split = command.split("\\s");
+		String operation = split[0];
+		String parameters = null;
+		try {
+			parameters = command.substring(operation.length() + 1);
 
-		// queue up the command
-		pending_commands.add(command);
+		}catch(Exception e){
+			//no parameters
+		}
+		
+		if(operation.equals(ASSIGN_ROLE_COMMAND)) {
+			if(isValidRole(parameters)) {
+				role = parameters;
+			} else {
+				System.out.println("Error: is not a valid role: "+ parameters);
+			}
+		} else {
+			if(pending_commands.isEmpty()){
+				// start a command tick if necessary
+				callback("commandTickCallback", new String[0], new Object[0]);
+			}
+
+			// queue up the command
+			pending_commands.add(command);
+		}
+		
 	}
 
 
@@ -709,7 +739,6 @@ public class TwitterNode extends RIONode {
          Post to a twitter stream
          Add/delete a follower to/from a twitter stream
          Read all (unread) posts that a user is following
-
 	 */
 	private void onCommand_ordered(String command) {
 		String[] split = command.split("\\s");
@@ -792,23 +821,23 @@ public class TwitterNode extends RIONode {
 				callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
 				commandInProgress++;
 			}
-        } else if (operation.equals(COMMAND_START_TRANSACTION)){
-            outstandingAcks = rcp_start_transaction(seq_num);
-            callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
-            commandInProgress++;
+		} else if (operation.equals(COMMAND_START_TRANSACTION)){
+			outstandingAcks = rcp_start_transaction(seq_num);
+			callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+			commandInProgress++;
 
-        } else if (operation.equals(COMMAND_COMMIT_TRANSACTION)){
-            outstandingAcks = rcp_commit_transaction(seq_num);
-            callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
-            commandInProgress++;
+		} else if (operation.equals(COMMAND_COMMIT_TRANSACTION)){
+			outstandingAcks = rcp_commit_transaction(seq_num);
+			callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+			commandInProgress++;
 
-        } else {
+		} else {
 			System.out.println("Unknown operation: " + operation);
 		}
 		updateSeqNum(outstandingAcks);
 	}
-	
-	
+
+
 	/*
 	 * RPC CALLS
 	 * methods used to send RPCs to the server
@@ -824,7 +853,7 @@ public class TwitterNode extends RIONode {
 
 		String json = mapToJson(json_map);
 
-        RIOSend(node, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
+		RIOSend(node, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
 		System.out.println("done sending");
 	}
 
@@ -912,21 +941,21 @@ public class TwitterNode extends RIONode {
 		return returned;
 	}
 
-    private Set<Long> rcp_start_transaction(long seq_num){
-        Set<Long> returned = new TreeSet<Long>();
-        rpc_call(0, Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
-        acked.put(seq_num, false);
-        returned.add(seq_num);
-        return returned;
-    }
+	private Set<Long> rcp_start_transaction(long seq_num){
+		Set<Long> returned = new TreeSet<Long>();
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
+		acked.put(seq_num, false);
+		returned.add(seq_num);
+		return returned;
+	}
 
-    private Set<Long> rcp_commit_transaction(long seq_num){
-        Set<Long> returned = new TreeSet<Long>();
-        rpc_call(0, Protocol.TWITTER_PKT, RPC_COMMIT, seq_num);
-        acked.put(seq_num, false);
-        returned.add(seq_num);
-        return returned;
-    }
+	private Set<Long> rcp_commit_transaction(long seq_num){
+		Set<Long> returned = new TreeSet<Long>();
+		rpc_call(0, Protocol.TWITTER_PKT, RPC_COMMIT, seq_num);
+		acked.put(seq_num, false);
+		returned.add(seq_num);
+		return returned;
+	}
 
 
 	/*
@@ -936,28 +965,28 @@ public class TwitterNode extends RIONode {
 	 */
 
 	public void commandTickCallback(){
-        TransactionState state = transactionStateMap.get(transaction_id);
-        if(commandInProgress == 0 && !pending_commands.isEmpty()){
-            if(state == TransactionState.COMMITTED){
-                pending_commands.remove();
-                transaction_id = INVALID_TID;
-            }else if(state == TransactionState.ABORTED){
-                transaction_id = INVALID_TID;
-            }
+		TransactionState state = transactionStateMap.get(transaction_id);
+		if(commandInProgress == 0 && !pending_commands.isEmpty()){
+			if(state == TransactionState.COMMITTED){
+				pending_commands.remove();
+				transaction_id = INVALID_TID;
+			}else if(state == TransactionState.ABORTED){
+				transaction_id = INVALID_TID;
+			}
 
-            if(transaction_id == INVALID_TID){
-                active_commands.clear();
-                if(!pending_commands.isEmpty()){
-                    active_commands.add(COMMAND_START_TRANSACTION);
-                    active_commands.add(pending_commands.peek());
-                    active_commands.add(COMMAND_COMMIT_TRANSACTION);
-                }
-            }
-        }
+			if(transaction_id == INVALID_TID){
+				active_commands.clear();
+				if(!pending_commands.isEmpty()){
+					active_commands.add(COMMAND_START_TRANSACTION);
+					active_commands.add(pending_commands.peek());
+					active_commands.add(COMMAND_COMMIT_TRANSACTION);
+				}
+			}
+		}
 		if(commandInProgress == 0 && !active_commands.isEmpty()){
-            String command = active_commands.remove();
-            System.out.println("executing command: " + command);
-            onCommand_ordered(command);
+			String command = active_commands.remove();
+			System.out.println("executing command: " + command);
+			onCommand_ordered(command);
 		}
 
 		if(!pending_commands.isEmpty()) {
@@ -1111,58 +1140,58 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
-    public void start_transaction_callback(Set<Long> outstandingAcks) {
-        System.out.println("start_transaction_callback called: " );
-        boolean all_acked = allAcked(outstandingAcks);
+	public void start_transaction_callback(Set<Long> outstandingAcks) {
+		System.out.println("start_transaction_callback called: " );
+		boolean all_acked = allAcked(outstandingAcks);
 
-        if(all_acked) {
-            for(Long ack : outstandingAcks) {
-                acked.remove(ack);
-            }
-            String response = packetBytesToString(this.msg);
+		if(all_acked) {
+			for(Long ack : outstandingAcks) {
+				acked.remove(ack);
+			}
+			String response = packetBytesToString(this.msg);
 
-            System.out.println("Transaction started");
-            System.out.println("response: " + response);
+			System.out.println("Transaction started");
+			System.out.println("response: " + response);
 
-            commandInProgress--;
-        } else {
-            long min_ack = Long.MAX_VALUE;
-            for(Long num : outstandingAcks){
-                min_ack = Math.min(num, min_ack);
-            }
-            rcp_start_transaction(min_ack);
-            callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
-        }
-    }
+			commandInProgress--;
+		} else {
+			long min_ack = Long.MAX_VALUE;
+			for(Long num : outstandingAcks){
+				min_ack = Math.min(num, min_ack);
+			}
+			rcp_start_transaction(min_ack);
+			callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+		}
+	}
 
 
-    public void commit_transaction_callback(Set<Long> outstandingAcks) {
-        System.out.println("commit_transaction_callback called: " );
-        boolean all_acked = allAcked(outstandingAcks);
+	public void commit_transaction_callback(Set<Long> outstandingAcks) {
+		System.out.println("commit_transaction_callback called: " );
+		boolean all_acked = allAcked(outstandingAcks);
 
-        if(all_acked) {
-            for(Long ack : outstandingAcks) {
-                acked.remove(ack);
-            }
-            String response = packetBytesToString(this.msg);
+		if(all_acked) {
+			for(Long ack : outstandingAcks) {
+				acked.remove(ack);
+			}
+			String response = packetBytesToString(this.msg);
 
-            System.out.println("Transaction committed");
-            System.out.println("response: " + response);
+			System.out.println("Transaction committed");
+			System.out.println("response: " + response);
 
-            commandInProgress--;
-        } else {
-            long min_ack = Long.MAX_VALUE;
-            for(Long num : outstandingAcks){
-                min_ack = Math.min(num, min_ack);
-            }
-            rcp_commit_transaction(min_ack);
-            callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
-        }
-    }
+			commandInProgress--;
+		} else {
+			long min_ack = Long.MAX_VALUE;
+			for(Long num : outstandingAcks){
+				min_ack = Math.min(num, min_ack);
+			}
+			rcp_commit_transaction(min_ack);
+			callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+		}
+	}
 
-    /*
-     * ASSORED HELPER FUNCTIONS
-     */
+	/*
+	 * ASSORED HELPER FUNCTIONS
+	 */
 
 	/*
 	 * returns true if all longs in outstandingAcks are
@@ -1181,7 +1210,7 @@ public class TwitterNode extends RIONode {
 		}
 		return all_acked;
 	}
-	
+
 	/*
 	 * makes seq_num the max of seq_num and all of outstandingAcks, +1
 	 */
@@ -1219,4 +1248,11 @@ public class TwitterNode extends RIONode {
 	public String toString() {
 		return super.toString();
 	}
+
+
+	/**
+	 * PAXOS STUFF
+	 */
+
+
 }
