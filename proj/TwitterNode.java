@@ -1248,43 +1248,4 @@ public class TwitterNode extends RIONode {
 	public String toString() {
 		return super.toString();
 	}
-
-
-	/**
-	 * PAXOS STUFF
-	 */
-	private Set<Long> nodesInPaxos = new TreeSet<Long>();
-	
-	private long paxosMaster = -1L;
-	
-	private long currentRoundOfVoting = 0;
-	private long currentProposalNumber = 0;
-	
-	private boolean voteInProgress = false;
-
-	// acceptor
-	private class AcceptorState {
-		long highestPromised;
-		long highestAccepted;
-		String value = null;
-	}	
-	private Map<Long, AcceptorState> stateOfRound = new TreeMap<Long, AcceptorState>();
-	
-	// learner
-	private Map<Long, String> roundToTransaction = new TreeMap<Long, String>();
-	
-	// proposer
-	private enum ProposerState {
-		PREPARE, PROPOSE, SENDING_TO_LEARNER
-	}
-	private class UpdateRequest {
-		String requestingServerId;
-		String requestedValue;
-		ProposerState currentState;
-		Set<Long> participants;
-		Set<Long> promised;
-		Set<Long> accepted;
-		Set<Long> learned;
-	}
-	private Map<Long, UpdateRequest> roundToUpdateRequest = new TreeMap<Long, UpdateRequest>();
 }
