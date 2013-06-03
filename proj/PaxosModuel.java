@@ -2,7 +2,7 @@ import java.util.*;
 
 public class PaxosModuel {
 
-    private Set<Long> nodesInPaxos;
+    private Set<Integer> nodesInPaxos;
 
     private long currentRoundOfVoting;
     private long currentProposalNumber;
@@ -30,10 +30,10 @@ public class PaxosModuel {
         String requestingServerId;
         String requestedValue;
         ProposerState currentState;
-        Set<Long> participants;
-        Map<Long, String> promised;
-        Set<Long> accepted;
-        Set<Long> learned;
+        Set<Integer> participants;
+        Map<Integer, String> promised;
+        Set<Integer> accepted;
+        Set<Integer> learned;
         long n;
     }
 
@@ -46,7 +46,7 @@ public class PaxosModuel {
     }
 
     public PaxosModuel(){
-        nodesInPaxos = new TreeSet<Long>();
+        nodesInPaxos = new TreeSet<Integer>();
         currentRoundOfVoting = 0;
         currentProposalNumber = 0;
         voteInProgress = false;
@@ -135,10 +135,10 @@ public class PaxosModuel {
     /*
         Return true if a majority of nodes have responded with null or the proposed value
      */
-    public boolean promise(long round, PrepareResponse response, long node){
+    public boolean promise(long round, PrepareResponse response, int node){
         UpdateRequest request = roundToUpdateRequest.get(round);
         if(request.promised == null){
-            request.promised = new TreeMap<Long, String>();
+            request.promised = new TreeMap<Integer, String>();
         }
 
         if(response != null){
@@ -148,7 +148,7 @@ public class PaxosModuel {
         //TODO save paxos state to disk
         if(request.promised.keySet().size() > nodesInPaxos.size() / 2){
             int counter = 0;
-            for(Map.Entry<Long, String> entry : request.promised.entrySet()) {
+            for(Map.Entry<Integer, String> entry : request.promised.entrySet()) {
                 if(entry.getValue() == null || entry.getValue().equals(request.requestedValue)) {
                     counter++;
                 }
@@ -161,7 +161,7 @@ public class PaxosModuel {
     /*
         If a majority have accepted, return true, else false
      */
-    public boolean accepted(long round, long node){
+    public boolean accepted(long round, int node){
         UpdateRequest request = roundToUpdateRequest.get(round);
 
         request.accepted.add(node);
@@ -169,15 +169,15 @@ public class PaxosModuel {
         return request.accepted.size() > nodesInPaxos.size()/2;
     }
 
-    public void addToPaxosGroup(long node) {
+    public void addToPaxosGroup(int node) {
         nodesInPaxos.add(node);
     }
 
-    public void removeFromPaxosGroup(long node) {
+    public void removeFromPaxosGroup(int node) {
         nodesInPaxos.remove(node);
     }
 
-    public Set<Long> getPaxosNodes(){
+    public Set<Integer> getPaxosNodes(){
         return Collections.unmodifiableSet(nodesInPaxos);
     }
 }

@@ -57,6 +57,7 @@ public class TwitterNode extends RIONode {
 
 	private static final String INVALID_TID = "-1";
 
+	// RPC calls for client-server interaction
 	private static final String RPC_START_TXN = "start_transaction";
 	private static final String RPC_COMMIT = "commit";
 	private static final String RPC_ABORT = "abort";
@@ -66,6 +67,7 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_CREATE = "create";
 	private static final String STATUS_SUCCESS = "success";
 
+	// role assignment commands
 	private static final String ASSIGN_ROLE_COMMAND = "assign";
 	private static final String SERVER_NODE_ROLE = "server";
 	private static final String PAXOS_NODE_ROLE = "paxos";
@@ -114,6 +116,8 @@ public class TwitterNode extends RIONode {
 		if(from >= NUM_SERVER_NODES){
 			processMessageAsServer(msg, from);
 		}
+		
+		processMessageAsPaxos(msg, from);
 	}
 
 	/*
@@ -1248,4 +1252,32 @@ public class TwitterNode extends RIONode {
 	public String toString() {
 		return super.toString();
 	}
+	
+	/*
+	 * PAXOS STUFF
+	 */
+	
+	// the different messages in the paxos protocol
+	private static final String RPC_PAX_PREPARE = "prepare";
+	private static final String RPC_PAX_PROPOSE = "propose";
+	private static final String RPC_PAX_PROMISE = "promise";
+	private static final String RPC_PAX_ACCEPTED = "accept";
+	private static final String RPC_PAX_LEARN = "learn";
+	
+	private void processMessageAsPaxos(byte[] msg, int clientId) {
+		String msgJson = packetBytesToString(msg);
+		Map<String, String> msgMap = jsonToMap(msgJson);
+		String received = msgMap.get(JSON_MSG);
+		String request_id = msgMap.get(JSON_REQUEST_ID);
+		System.out.println("message received by server: " + msgJson);
+		String command = received.split("\\s")[0];
+
+		String response = "";
+	}
+	
+	private void rpcPrepare(int node, String message, long seq_num){
+		rpc_call(node, Protocol.TWITTER_PKT, RPC_PAX_PREPARE + " " + message + TWEET_FILE_SUFFIX, seq_num);
+	}
+	
+	
 }
