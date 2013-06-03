@@ -1257,27 +1257,92 @@ public class TwitterNode extends RIONode {
 	 * PAXOS STUFF
 	 */
 	
+	// the JSON keys for messages paxos is sending
+	private static final String JSON_COMMAND = "rpc";
+	private static final String JSON_PAX_ROUND = "round";
+	private static final String JSON_PAX_PROPOSAL_NUM = "n";
+	private static final String JSON_PAX_VALUE = "value";
+	
 	// the different messages in the paxos protocol
 	private static final String RPC_PAX_PREPARE = "prepare";
-	private static final String RPC_PAX_PROPOSE = "propose";
 	private static final String RPC_PAX_PROMISE = "promise";
-	private static final String RPC_PAX_ACCEPTED = "accept";
+	private static final String RPC_PAX_ACCEPT_REQUEST = "acceptRequest";	
+	private static final String RPC_PAX_ACCEPTED = "accepted";
 	private static final String RPC_PAX_LEARN = "learn";
+	
+	private PaxosModuel pax = new PaxosModuel();
 	
 	private void processMessageAsPaxos(byte[] msg, int clientId) {
 		String msgJson = packetBytesToString(msg);
+		System.out.println("msg received by paxos: " + msgJson);
+		
 		Map<String, String> msgMap = jsonToMap(msgJson);
-		String received = msgMap.get(JSON_MSG);
-		String request_id = msgMap.get(JSON_REQUEST_ID);
-		System.out.println("message received by server: " + msgJson);
-		String command = received.split("\\s")[0];
+		String command = msgMap.get(JSON_COMMAND);
+		String roundStr = msgMap.get(JSON_PAX_ROUND);
+		long round = Long.parseLong(roundStr);
+		//Map<String, String> response = new TreeMap<String,String>();
+		
+		
+		if(RPC_PAX_PREPARE.equals(command)){
+			String proposalNumStr = msgMap.get(JSON_PAX_PROPOSAL_NUM);
+			long proposalNum = Long.parseLong(proposalNumStr);
+			PaxosModuel.PrepareResponse res = pax.prepare(round, proposalNum);
 
-		String response = "";
+			if(res!= null){
+				// if we have not promised to honor a higher proposal #
+				Map<String, String> response = new TreeMap<String, String>();
+				response.put(JSON_COMMAND, RPC_PAX_PROMISE);
+				response.put(JSON_PAX_ROUND, roundStr);
+				response.put(JSON_PAX_PROPOSAL_NUM, Long.toString(res.n));
+				response.put(JSON_PAX_VALUE, res.value);
+				
+				paxosRpc(clientId, response);
+			}			
+		} else if (RPC_PAX_PROMISE.equals(command)) {
+			PaxosModuel.PrepareResponse res = pax.getNewPrepareResponse();
+			res.n = Long.parseLong(msgMap.get(JSON_PAX_PROPOSAL_NUM));
+			res.value = msgMap.get(JSON_PAX_VALUE);
+			
+			boolean majorityPromised = pax.promise(round, res, clientId);
+			
+			if(majorityPromised) {
+				Map<String, String> message = new TreeMap<String, String>();
+				message.put(JSON_COMMAND, RPC_PAX_ACCEPT_REQUEST);
+				message.put(JSON_PAX_ROUND, roundStr);
+				message.put(JSON_PAX_VALUE, msgMap.get(JSON_PAX_VALUE));
+				message.put(JSON_PAX_PROPOSAL_NUM, msgMap.get(JSON_PAX_PROPOSAL_NUM));
+				
+				Set<Integer> nodes = pax.getPaxosNodes();
+				for(Integer paxNode : nodes) {
+					paxosRpc(paxNode, message);
+				}
+			}
+		} else if (RPC_PAX_ACCEPT_REQUEST.equals(command)) {
+			String proposalNumStr = msgMap.get(JSON_PAX_PROPOSAL_NUM);
+			long proposalNum = Long.parseLong(proposalNumStr);
+			boolean success = pax.propose(round, proposalNum, msgMap.get(JSON_PAX_VALUE));
+			if(success){
+				// if we are accepting that value
+				Map<String, String> response = new TreeMap<String, String>();
+				response.put(JSON_COMMAND, RPC_PAX_ACCEPTED);
+				response.put(JSON_PAX_ROUND, roundStr);
+				response.put(JSON_PAX_VALUE, msgMap.get(JSON_PAX_VALUE));
+				
+				paxosRpc(clientId, response);
+			}
+		} else if (RPC_PAX_ACCEPTED.equals(command)) {
+			
+		} else if (RPC_PAX_LEARN.equals(command)) {
+			
+		} else {
+			throw new IllegalArgumentException("unknown command: "+command);
+		}
 	}
 	
-	private void rpcPrepare(int node, String message, long seq_num){
-		rpc_call(node, Protocol.TWITTER_PKT, RPC_PAX_PREPARE + " " + message + TWEET_FILE_SUFFIX, seq_num);
-	}
-	
-	
+	private void paxosRpc(int destNode, Map<String, String> message){
+		String json = mapToJson(message);
+
+		RIOSend(destNode, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
+		System.out.printf("Paxos to %d: %s\n", destNode,json);
+	}	
 }
