@@ -1264,15 +1264,17 @@ public class TwitterNode extends RIONode {
 	private static final String JSON_PAX_VALUE = "value";
 	
 	// the different messages in the paxos protocol
+	private static final String RPC_PAX_STORE_TXN_REQUEST = "storeTxnRequest";
 	private static final String RPC_PAX_PREPARE = "prepare";
 	private static final String RPC_PAX_PROMISE = "promise";
 	private static final String RPC_PAX_ACCEPT_REQUEST = "acceptRequest";	
 	private static final String RPC_PAX_ACCEPTED = "accepted";
 	private static final String RPC_PAX_LEARN = "learn";
+	private static final String RPC_PAX_LEARN_ACQ = "learnAcq";
 	
-	private PaxosModuel pax = new PaxosModuel();
+	private PaxosModuel pax = new PaxosModuel(this);
 	
-	private void processMessageAsPaxos(byte[] msg, int clientId) {
+	private void processMessageAsPaxos(byte[] msg, int node) {
 		String msgJson = packetBytesToString(msg);
 		System.out.println("msg received by paxos: " + msgJson);
 		
@@ -1280,9 +1282,31 @@ public class TwitterNode extends RIONode {
 		String command = msgMap.get(JSON_COMMAND);
 		String roundStr = msgMap.get(JSON_PAX_ROUND);
 		long round = Long.parseLong(roundStr);
+		
 		//Map<String, String> response = new TreeMap<String,String>();
 		
+		// server -> paxos
+		if(RPC_PAX_STORE_TXN_REQUEST.equals(command)) {
+			//TODO detect duplicate response from same client,
+			long proposalNum = pax.startNewVote(node, round, msgMap.get(JSON_PAX_VALUE));
+			
+			//TODO howto deal with duplicate requests? implemented in startNewVote?
+			if(proposalNum != -1L){
+				Map<String, String> prepareMessage = new TreeMap<String, String>();
+				prepareMessage.put(JSON_COMMAND, RPC_PAX_PREPARE);
+				prepareMessage.put(JSON_PAX_PROPOSAL_NUM, Long.toString(proposalNum));
+				prepareMessage.put(JSON_PAX_ROUND, roundStr);
+				
+				Set<Integer> nodes = pax.getPaxosNodes();
+				for(Integer paxNode : nodes) {
+					paxosRpc(paxNode, prepareMessage);
+				}
+			}
+			
+			return;
+		}
 		
+		// paxos -> paxos
 		if(RPC_PAX_PREPARE.equals(command)){
 			String proposalNumStr = msgMap.get(JSON_PAX_PROPOSAL_NUM);
 			long proposalNum = Long.parseLong(proposalNumStr);
@@ -1296,20 +1320,19 @@ public class TwitterNode extends RIONode {
 				response.put(JSON_PAX_PROPOSAL_NUM, Long.toString(res.n));
 				response.put(JSON_PAX_VALUE, res.value);
 				
-				paxosRpc(clientId, response);
+				paxosRpc(node, response);
 			}			
-		} else if (RPC_PAX_PROMISE.equals(command)) {
-			PaxosModuel.PrepareResponse res = pax.getNewPrepareResponse();
-			res.n = Long.parseLong(msgMap.get(JSON_PAX_PROPOSAL_NUM));
-			res.value = msgMap.get(JSON_PAX_VALUE);
-			
-			boolean majorityPromised = pax.promise(round, res, clientId);
+		} else if (RPC_PAX_PROMISE.equals(command)) {			
+			boolean majorityPromised = pax.promise(round, 
+					Long.parseLong(msgMap.get(JSON_PAX_PROPOSAL_NUM)), 
+					msgMap.get(JSON_PAX_VALUE), 
+					node);
 			
 			if(majorityPromised) {
 				Map<String, String> message = new TreeMap<String, String>();
 				message.put(JSON_COMMAND, RPC_PAX_ACCEPT_REQUEST);
 				message.put(JSON_PAX_ROUND, roundStr);
-				message.put(JSON_PAX_VALUE, msgMap.get(JSON_PAX_VALUE));
+				message.put(JSON_PAX_VALUE, pax.getProposedValue(round));
 				message.put(JSON_PAX_PROPOSAL_NUM, msgMap.get(JSON_PAX_PROPOSAL_NUM));
 				
 				Set<Integer> nodes = pax.getPaxosNodes();
@@ -1328,12 +1351,32 @@ public class TwitterNode extends RIONode {
 				response.put(JSON_PAX_ROUND, roundStr);
 				response.put(JSON_PAX_VALUE, msgMap.get(JSON_PAX_VALUE));
 				
-				paxosRpc(clientId, response);
+				paxosRpc(node, response);
 			}
 		} else if (RPC_PAX_ACCEPTED.equals(command)) {
-			
+			boolean majorityAccepted = pax.accepted(round, node);
+			if(majorityAccepted) {	
+				// if a quorum have accepted, send to learners
+				Map<String, String> message = new TreeMap<String, String>();
+				message.put(JSON_COMMAND, RPC_PAX_LEARN);
+				message.put(JSON_PAX_ROUND, roundStr);
+				message.put(JSON_PAX_VALUE, msgMap.get(JSON_PAX_VALUE));
+				
+				Set<Integer> nodes = pax.getPaxosNodes();
+				for(Integer paxNode : nodes) {
+					//TODO should we do a callback to make sure all learners have learned?
+					paxosRpc(paxNode, message);
+				}
+			}
 		} else if (RPC_PAX_LEARN.equals(command)) {
+			pax.learn(round, JSON_PAX_VALUE);
+			Map<String, String> response = new TreeMap<String, String>();
+			response.put(JSON_COMMAND, RPC_PAX_LEARN_ACQ);
+			response.put(JSON_PAX_ROUND, roundStr);
 			
+			paxosRpc(node, response);
+		} else if (RPC_PAX_LEARN_ACQ.equals(command)){
+			pax.learned(round, node);
 		} else {
 			throw new IllegalArgumentException("unknown command: "+command);
 		}

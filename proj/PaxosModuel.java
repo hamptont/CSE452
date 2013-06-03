@@ -9,7 +9,7 @@ public class PaxosModuel {
 
     private Set<Integer> nodesInPaxos;
 
-    private long currentRoundOfVoting;
+    //private long currentRoundOfVoting;
     private long currentProposalNumber;
 
     //private boolean voteInProgress;
@@ -52,10 +52,12 @@ public class PaxosModuel {
     }
     
     // start a transaction proposal
+    /*
     public class RoundInfo {
     	long roundNum;
     	long proposalNum;
     }
+    */
 
     public PaxosModuel(Node encompassingNode){
     	//TODO do all the recovery/initial file creation shit
@@ -63,7 +65,7 @@ public class PaxosModuel {
 			encompassingNode.getReader(PAXOS_STATE_FILENAME);
 		} catch (FileNotFoundException e) {
 			nodesInPaxos = new TreeSet<Integer>();
-	        currentRoundOfVoting = 0;
+	        //currentRoundOfVoting = 0;
 	        currentProposalNumber = Utility.getRNG().nextLong();
 	        
 	        
@@ -78,27 +80,30 @@ public class PaxosModuel {
     }
     
     /**
-     * Returns the information abotu a new round of voting, or null if a vote is
-     * currently in progress
+     * Returns the proposalNumber to be used for the given round, 
+     * or -1 if a new round cannot be started
      * @return
      */
-    public RoundInfo startNewVote(int requestingNodeId) {
-    	if((stateOfRound.get(currentRoundOfVoting) == null 
-    			&& roundToTransaction.get(currentRoundOfVoting) == null
-    			&& roundToUpdateRequest.get(currentRoundOfVoting) == null)) {
+    public long startNewVote(int requestingNodeId, long round, String value) {
+    	if((stateOfRound.get(round) == null 
+    			&& roundToTransaction.get(round) == null
+    			&& roundToUpdateRequest.get(round) == null)) {
+    		
     		// if the current round is not in progress
     		UpdateRequest newUpdate = new UpdateRequest();
-    		roundToUpdateRequest.put(currentRoundOfVoting, newUpdate);
+    		roundToUpdateRequest.put(round, newUpdate);
     		newUpdate.requestingServerId = requestingNodeId;
     		newUpdate.n = currentProposalNumber;
     		newUpdate.participants = new TreeSet<Integer>(nodesInPaxos);
+    		newUpdate.requestedValue = value;
     		
-    		RoundInfo returned = new RoundInfo();
-        	returned.proposalNum = currentProposalNumber++; //increment after we're done assigning it
-        	returned.roundNum = currentRoundOfVoting;
-        	return returned;
+    		//RoundInfo returned = new RoundInfo();
+        	//returned.proposalNum = currentProposalNumber++; //increment after we're done assigning it
+        	//returned.roundNum = round;
+        	return currentProposalNumber++;
+        	//TODO implement check for identical request that has already been issued
     	} else {
-    		return null;  
+    		return -1L;  
     	}    	  	
     }
 
@@ -182,7 +187,7 @@ public class PaxosModuel {
      * @return
      */
     public boolean learn(long round, String value){
-    	currentRoundOfVoting = Math.max(currentRoundOfVoting, round + 1);
+    	//currentRoundOfVoting = Math.max(currentRoundOfVoting, round + 1);
     	
         //write to disk
         //ack
@@ -235,6 +240,10 @@ public class PaxosModuel {
             return counter > request.participants.size() / 2;
         }
         return false;
+    }
+    
+    public String getProposedValue(long round) {
+    	return roundToUpdateRequest.get(round).requestedValue;
     }
 
     /**
