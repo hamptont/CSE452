@@ -40,12 +40,14 @@ public class TwitterNode extends RIONode {
 	 * String constants
 	 */
 
-	private static final int NUM_SERVER_NODES = 128;
+	//private static final int NUM_SERVER_NODES = 128;
 
 	private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
+	
+	private static final String TWEET_TIMESTAMP_TOKEN = "~";
 
 	private static final String JSON_MSG = "msg";
 	private static final String JSON_REQUEST_ID = "request_id";
@@ -112,17 +114,18 @@ public class TwitterNode extends RIONode {
 		// update the sequence number to be larger than any seen previously
 		seq_num = Math.max(remote_seq_num, seq_num) + 1;
 
-		//msg from server, client executes code
-		if(from < NUM_SERVER_NODES) {
+		
+		if(role.equals(CLIENT_NODE_ROLE)) {
+			//msg from server, client executes code
 			processMessageAsClient(msg);
-		}
-
-		//msg from client, server executes code
-		if(from >= NUM_SERVER_NODES){
+		} else if(role.equals(SERVER_NODE_ROLE)){
+			//msg from client, server executes code
 			processMessageAsServer(msg, from);
-		}
-
-		processMessageAsPaxos(msg, from);
+		} else if(role.equals(PAXOS_NODE_ROLE)) {
+			processMessageAsPaxos(msg, from);
+		} else {
+			throw new IllegalStateException("Invalid node role: "+ role);
+		}		
 	}
 
 	/*
@@ -428,7 +431,7 @@ public class TwitterNode extends RIONode {
 
 		// initialize local variables
 		acked = new HashMap<Long, Boolean>();
-		seq_num = System.currentTimeMillis();
+		seq_num = 0L;
 		tweets = new HashMap<String, String>();
 		pending_commands = new LinkedList<String>();
 		commandInProgress = 0;
@@ -437,6 +440,9 @@ public class TwitterNode extends RIONode {
 		transactionStateMap = new TreeMap<String, TransactionState>();
 		active_commands = new LinkedList<String>();
 		clientMap = new TreeMap<Integer, TransactionData>();
+		
+		// paxos module initialization
+		pax = new PaxosModuel(this);
 
 		// finish writing files, if necessary
 
@@ -543,7 +549,7 @@ public class TwitterNode extends RIONode {
 				String username = filename.split("-")[0];
 				for(String s : fileMap.keySet()){
 					//return values -- username of people you are following
-					response += s + username + " " + fileMap.get(s) + "\n";
+					response += s + TWEET_TIMESTAMP_TOKEN + username + " " + fileMap.get(s) + "\n";
 				}
 				response = response.trim();
 			}catch(Exception e){
@@ -865,7 +871,7 @@ public class TwitterNode extends RIONode {
 
 
 	/*
-	 * RPC CALLS
+	 * RPCALLS
 	 * methods used to send RPCs to the server
 	 */
 
@@ -1130,7 +1136,8 @@ public class TwitterNode extends RIONode {
 			}
 			System.out.println((username + "'s follower's tweets:").toUpperCase());
 			for(String val : tweets.keySet()){
-				System.out.println( val.substring(13) + " : " + tweets.get(val));
+
+				System.out.println( val.substring(val.indexOf(TWEET_TIMESTAMP_TOKEN) + 1) + " : " + tweets.get(val));
 			}
 			commandInProgress--;
 		} else {
@@ -1296,7 +1303,7 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_PAX_LEARN = "learn";
 	private static final String RPC_PAX_LEARN_ACQ = "learnAcq";
 
-	private PaxosModuel pax = new PaxosModuel(this);
+	private PaxosModuel pax;
 
 	private void processMessageAsPaxos(byte[] msg, int sendingNode) {
 		String msgJson = packetBytesToString(msg);
@@ -1306,7 +1313,13 @@ public class TwitterNode extends RIONode {
 		Map<String, String> msgMap = (Map<String, String>)jsonToMap(msgJson, mapType);
 		String command = msgMap.get(JSON_COMMAND);
 		String roundStr = msgMap.get(JSON_PAX_ROUND);
-		long round = Long.parseLong(roundStr);
+		long round = -1L;
+
+		try{
+			round = Long.parseLong(roundStr);
+		} catch (Exception e) {
+			// deliberately blank
+		}
 
 		//TODO short circuit if value already learned?
 		if(pax.getLearnedValue(round) != null){
@@ -1327,7 +1340,7 @@ public class TwitterNode extends RIONode {
 
 			//TODO howto deal with duplicate requests? implemented in startNewVote?
 			if(proposalNum != -1L){
-				// if a new round of voting 
+				// if a new round of voting is being started with this node as proposer
 				Map<String, String> prepareMessage = new TreeMap<String, String>();
 				prepareMessage.put(JSON_COMMAND, RPC_PAX_PREPARE);
 				prepareMessage.put(JSON_PAX_PROPOSAL_NUM, Long.toString(proposalNum));
@@ -1415,13 +1428,14 @@ public class TwitterNode extends RIONode {
 				paxosRpc(pax.getProposingNodeId(round), txnConfirmMsg);
 			}
 		} else if (RPC_PAX_LEARN.equals(command)) {
-			pax.learn(round, JSON_PAX_VALUE);
+			pax.learn(round, msgMap.get(JSON_PAX_VALUE));
 			Map<String, String> response = new TreeMap<String, String>();
 			response.put(JSON_COMMAND, RPC_PAX_LEARN_ACQ);
 			response.put(JSON_PAX_ROUND, roundStr);
 
 			paxosRpc(sendingNode, response);
 		} else if (RPC_PAX_LEARN_ACQ.equals(command)){
+			//TODO will never get here if we use the short-circuit
 			pax.learned(round, sendingNode);
 		} else {
 			throw new IllegalArgumentException("unknown command: "+command);
@@ -1429,6 +1443,8 @@ public class TwitterNode extends RIONode {
 	}
 
 	private void paxosRpc(int destNode, Map<String, String> message){
+        message.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
+
         Type mapType = new TypeToken<Map<String, String>>() {}.getType();
 		String json = mapToJson(message, mapType);
 
