@@ -243,7 +243,17 @@ public class PaxosModuel {
     }
     
     public String getProposedValue(long round) {
-    	return roundToUpdateRequest.get(round).requestedValue;
+    	UpdateRequest updateReq = roundToUpdateRequest.get(round);
+    	return updateReq == null ? null : updateReq.requestedValue;
+    }
+    
+    public int getProposingNodeId(long round){
+    	UpdateRequest updateReq = roundToUpdateRequest.get(round);
+    	return updateReq == null ? null : updateReq.requestingServerId;
+    }
+    
+    public String getLearnedValue(long round) {
+    	return roundToTransaction.get(round);
     }
 
     /**
