@@ -40,12 +40,14 @@ public class TwitterNode extends RIONode {
 	 * String constants
 	 */
 
-	private static final int NUM_SERVER_NODES = 128;
+	//private static final int NUM_SERVER_NODES = 128;
 
 	private static final String TWEET_FILE_SUFFIX = "-tweets";
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
+	
+	private static final String TWEET_TIMESTAMP_TOKEN = "~";
 
 	private static final String JSON_MSG = "msg";
 	private static final String JSON_REQUEST_ID = "request_id";
@@ -118,9 +120,7 @@ public class TwitterNode extends RIONode {
 			processMessageAsPaxos(msg, from);
 		} else {
 			throw new IllegalStateException("Invalid node role: "+ role);
-		}
-
-		
+		}		
 	}
 
 	/*
@@ -423,7 +423,7 @@ public class TwitterNode extends RIONode {
 
 		// initialize local variables
 		acked = new HashMap<Long, Boolean>();
-		seq_num = System.currentTimeMillis();
+		seq_num = 0L;
 		tweets = new HashMap<String, String>();
 		pending_commands = new LinkedList<String>();
 		commandInProgress = 0;
@@ -432,6 +432,9 @@ public class TwitterNode extends RIONode {
 		transactionStateMap = new TreeMap<String, TransactionState>();
 		active_commands = new LinkedList<String>();
 		clientMap = new TreeMap<Integer, TransactionData>();
+		
+		// paxos module initialization
+		pax = new PaxosModuel(this);
 
 		// finish writing files, if necessary
 
@@ -538,7 +541,7 @@ public class TwitterNode extends RIONode {
 				String username = filename.split("-")[0];
 				for(String s : fileMap.keySet()){
 					//return values -- username of people you are following
-					response += s + username + " " + fileMap.get(s) + "\n";
+					response += s + TWEET_TIMESTAMP_TOKEN + username + " " + fileMap.get(s) + "\n";
 				}
 				response = response.trim();
 			}catch(Exception e){
@@ -1110,7 +1113,8 @@ public class TwitterNode extends RIONode {
 			}
 			System.out.println((username + "'s follower's tweets:").toUpperCase());
 			for(String val : tweets.keySet()){
-				System.out.println( val.substring(13) + " : " + tweets.get(val));
+
+				System.out.println( val.substring(val.indexOf(TWEET_TIMESTAMP_TOKEN) + 1) + " : " + tweets.get(val));
 			}
 			commandInProgress--;
 		} else {
@@ -1276,7 +1280,7 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_PAX_LEARN = "learn";
 	private static final String RPC_PAX_LEARN_ACQ = "learnAcq";
 
-	private PaxosModuel pax = new PaxosModuel(this);
+	private PaxosModuel pax;
 
 	private void processMessageAsPaxos(byte[] msg, int sendingNode) {
 		String msgJson = packetBytesToString(msg);
@@ -1415,6 +1419,7 @@ public class TwitterNode extends RIONode {
 	}
 
 	private void paxosRpc(int destNode, Map<String, String> message){
+		message.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
 		String json = mapToJson(message);
 
 		RIOSend(destNode, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
