@@ -1,11 +1,19 @@
-import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.lang.reflect.Type;
 import java.util.*;
 
-import edu.washington.cs.cse490h.lib.Node;
+import com.google.gson.reflect.TypeToken;
+import edu.washington.cs.cse490h.lib.PersistentStorageWriter;
 import edu.washington.cs.cse490h.lib.Utility;
 
 public class PaxosModuel {
 	private static final String PAXOS_STATE_FILENAME = "paxosStateFile";
+    private static Type TypeSetInt = new TypeToken<Set<Integer>>() {}.getType();
+    private static Type TypeLong = new TypeToken<Long>() {}.getType();
+    private static Type TypeMapLongAcceptorState = new TypeToken<Map<Long, AcceptorState>>() {}.getType();
+    private static Type TypeMapLongString = new TypeToken<Map<Long, String>>() {}.getType();
+    private static Type TypeMapLongUpdateRequest = new TypeToken<Map<Long, UpdateRequest>>() {}.getType();
+
 
     private Set<Integer> nodesInPaxos;
 
@@ -59,11 +67,18 @@ public class PaxosModuel {
     }
     */
 
-    public PaxosModuel(Node encompassingNode){
+    private PersistentStorageWriter byte_writer; //~~~~
+    TwitterNode encompassingNode;
+
+
+    public PaxosModuel(TwitterNode encompassingNode){
     	//TODO do all the recovery/initial file creation shit
-    	try {
-			encompassingNode.getReader(PAXOS_STATE_FILENAME);
-		} catch (FileNotFoundException e) {
+    //	try {
+            this.encompassingNode = encompassingNode;
+        //    byte_writer = encompassingNode.getPersistentStorageWriter(PAXOS_STATE_FILENAME, false);  //~~~~
+
+			//encompassingNode.getReader(PAXOS_STATE_FILENAME);
+	//	} catch (IOException e) {
 			nodesInPaxos = new TreeSet<Integer>();
 	        //currentRoundOfVoting = 0;
 	        currentProposalNumber = Utility.getRNG().nextLong();
@@ -76,7 +91,7 @@ public class PaxosModuel {
 	        roundToTransaction = new TreeMap<Long, String>();
 	        // proposer
 	        roundToUpdateRequest = new TreeMap<Long, UpdateRequest>();
-		}        
+	//	}
     }
     
     /**
@@ -213,7 +228,7 @@ public class PaxosModuel {
     /**
      * Return true if a majority of nodes have responded with null or the proposed value
      * @param round
-     * @param response
+     * @param responseN
      * @param node
      * @return
      */
@@ -293,4 +308,49 @@ public class PaxosModuel {
     public PrepareResponse getNewPrepareResponse(){
     	return new PrepareResponse();
     }
+
+    /*
+        Saves the paxox node's private variables to disk in json form
+     */
+    public void saveStateToDisk(){
+        Map<String, String> contents = new TreeMap<String, String>();
+
+        contents.put("nodesInPaxos", TwitterNode.mapToJson(nodesInPaxos, TypeSetInt));
+        contents.put("currentProposalNumber", TwitterNode.mapToJson(currentProposalNumber, TypeLong));
+        contents.put("stateOfRound", TwitterNode.mapToJson(stateOfRound, TypeMapLongAcceptorState));
+        contents.put("roundToTransaction", TwitterNode.mapToJson(roundToTransaction, TypeMapLongString));
+        contents.put("roundToUpdateRequest", TwitterNode.mapToJson(roundToUpdateRequest, TypeMapLongUpdateRequest));
+
+        Type TypeMapStringString = new TypeToken<Map<String, String>>() {}.getType();
+        String json = TwitterNode.mapToJson(contents, TypeMapStringString);
+        System.out.println("JSON saved to disk: " + json);
+
+        try{
+            encompassingNode.writeFile(PAXOS_STATE_FILENAME, json);
+        }catch(IOException e){
+            System.out.println("Error: unable to write paxos recovery file");
+        }
+    }
+
+    /*
+        Loads paxos node's private variables from disk.
+        Returns true if successful, false otherwise (no valid file exists)
+     */
+    public boolean recoverStateFromDisk(){
+        try{
+            Map<String, String> file = encompassingNode.readJsonFile(PAXOS_STATE_FILENAME);
+            System.out.println("JSON read from disk: " + file.toString());
+
+            this.nodesInPaxos = (Set<Integer>)TwitterNode.jsonToMap(file.get("nodesInPaxos"), TypeSetInt);
+            this.currentProposalNumber = (Long)TwitterNode.jsonToMap(file.get("currentProposalNumber"), TypeLong);
+            this.stateOfRound = (Map<Long, AcceptorState>)TwitterNode.jsonToMap(file.get("stateOfRound"), TypeMapLongAcceptorState);
+            this.roundToTransaction = (Map<Long, String>)TwitterNode.jsonToMap(file.get("roundToTransaction"), TypeMapLongString);
+            this.roundToUpdateRequest = (Map<Long, UpdateRequest>)TwitterNode.jsonToMap(file.get("roundToUpdateRequest"), TypeMapLongUpdateRequest);
+
+            return true;
+        }catch(Exception e){
+            System.out.println("Error: unable to write paxos recovery file");
+            return false;
+        }
+     }
 }
