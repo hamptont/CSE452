@@ -40,15 +40,24 @@ public class PaxosModuel {
         PREPARE, PROPOSE, SENDING_TO_LEARNER
     }
 */
+    private class Promise {
+    	long proposalNum;
+    	String value;
+    	
+    	Promise(long proposalNum, String value){
+    		this.proposalNum = proposalNum;
+    		this.value = value;
+    	}
+    }
     private class UpdateRequest {
         int requestingServerId;
         String requestedValue;
 //      ProposerState currentState;
         Set<Integer> participants;
-        Map<Integer, String> promised;
+        Map<Integer, Promise> promised;
         Set<Integer> accepted;
         Set<Integer> learned;
-        long n;
+        long proposalNum;
     }
 
     private Map<Long, UpdateRequest> roundToUpdateRequest;
@@ -99,6 +108,7 @@ public class PaxosModuel {
      * or -1 if a new round cannot be started
      * @return
      */
+    // proposer
     public long startNewVote(int requestingNodeId, long round, String value) {
     	if((stateOfRound.get(round) == null 
     			&& roundToTransaction.get(round) == null
@@ -108,7 +118,7 @@ public class PaxosModuel {
     		UpdateRequest newUpdate = new UpdateRequest();
     		roundToUpdateRequest.put(round, newUpdate);
     		newUpdate.requestingServerId = requestingNodeId;
-    		newUpdate.n = currentProposalNumber;
+    		newUpdate.proposalNum = currentProposalNumber;
     		newUpdate.participants = new TreeSet<Integer>(nodesInPaxos);
     		newUpdate.requestedValue = value;
     		
@@ -132,6 +142,7 @@ public class PaxosModuel {
      * @param n
      * @return
      */
+    // acceptor
     public PrepareResponse prepare(long round, long n){
         PrepareResponse response = new PrepareResponse();
 
@@ -167,6 +178,7 @@ public class PaxosModuel {
      * @param value
      * @return
      */
+    // acceptor
     public boolean propose(long round, long n, String value){
 
     	if(value == null) {
@@ -201,6 +213,7 @@ public class PaxosModuel {
      * @param value
      * @return
      */
+    // learner
     public boolean learn(long round, String value){
     	//currentRoundOfVoting = Math.max(currentRoundOfVoting, round + 1);
     	
@@ -226,7 +239,7 @@ public class PaxosModuel {
     }
 
     /**
-     * Return true if a majority of nodes have responded with null or the proposed value
+     * Return true if a majority of nodes have promised
      * @param round
      * @param responseN
      * @param node
@@ -235,24 +248,24 @@ public class PaxosModuel {
     public boolean promise(long round, long responseN, String responseValue, int node){
         UpdateRequest request = roundToUpdateRequest.get(round);
         if(request.promised == null){
-            request.promised = new TreeMap<Integer, String>();
+            request.promised = new TreeMap<Integer, Promise>();
         }
 
-        request.promised.put(node, responseValue);
-        /*
-        if(response != null){
-            request.promised.put(node, response.value);
-        }
-*/
+        Promise promise = new Promise(responseN, responseValue);
+        request.promised.put(node, promise);
+
         //TODO save paxos state to disk
         if(request.promised.keySet().size() > request.participants.size() / 2){
-            int counter = 0;
-            for(Map.Entry<Integer, String> entry : request.promised.entrySet()) {
-                if(entry.getValue() == null || entry.getValue().equals(request.requestedValue)) {
-                    counter++;
+            long highestProposalNumWithNonNullValue = -1L;
+            for(Map.Entry<Integer, Promise> entry : request.promised.entrySet()) {
+                if(entry.getValue().value != null) {
+                	if (entry.getValue().proposalNum > highestProposalNumWithNonNullValue){
+                		highestProposalNumWithNonNullValue = entry.getValue().proposalNum;
+                		request.requestedValue = entry.getValue().value;
+                	}                	
                 }
             }
-            return counter > request.participants.size() / 2;
+            return true;
         }
         return false;
     }
@@ -260,6 +273,11 @@ public class PaxosModuel {
     public String getProposedValue(long round) {
     	UpdateRequest updateReq = roundToUpdateRequest.get(round);
     	return updateReq == null ? null : updateReq.requestedValue;
+    }
+    
+    public long getProposalNumForRound(long round){
+    	UpdateRequest updateReq = roundToUpdateRequest.get(round);
+    	return updateReq == null ? -1L : updateReq.proposalNum;
     }
     
     public int getProposingNodeId(long round){

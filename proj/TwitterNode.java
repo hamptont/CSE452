@@ -119,6 +119,7 @@ public class TwitterNode extends RIONode {
 		active_commands = new LinkedList<String>();
 		clientMap = new TreeMap<Integer, TransactionData>();
 		currentTransactionRound = 0L;
+		knownServers = new TreeSet<Integer>();
 		
 		// paxos module initialization
 		pax = new PaxosModuel(this);
@@ -137,10 +138,6 @@ public class TwitterNode extends RIONode {
 
 	@Override
 	public void onRIOReceive(Integer from, int protocol, byte[] msg) {
-        pax.saveStateToDisk();
-        pax.recoverStateFromDisk();
-
-
 		// extract the sequence num from the message, update this node's seq_num
 		String json = packetBytesToString(msg);
         Type mapType = new TypeToken<Map<String, String>>() {}.getType();
@@ -1313,6 +1310,7 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_PAX_LEARN_ACQ = "learnAcq";
 
 	private PaxosModuel pax;
+	private Set<Integer> knownServers;
 
 	private void processMessageAsPaxos(byte[] msg, int sendingNode) {
 		String msgJson = packetBytesToString(msg);
@@ -1389,7 +1387,7 @@ public class TwitterNode extends RIONode {
 				message.put(JSON_COMMAND, RPC_PAX_ACCEPT_REQUEST);
 				message.put(JSON_PAX_ROUND, roundStr);
 				message.put(JSON_PAX_VALUE, pax.getProposedValue(round));
-				message.put(JSON_PAX_PROPOSAL_NUM, msgMap.get(JSON_PAX_PROPOSAL_NUM));
+				message.put(JSON_PAX_PROPOSAL_NUM, Long.toString(pax.getProposalNumForRound(round)));
 
 				Set<Integer> nodes = pax.getPaxosNodes();
 				for(Integer paxNode : nodes) {
