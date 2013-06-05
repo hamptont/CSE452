@@ -32,7 +32,7 @@ public class PaxosModuel {
     private Map<Long, AcceptorState> stateOfRound;
 
     // learner
-    private Map<Long, String> roundToTransaction;
+    private TreeMap<Long, String> roundToTransaction;
 
     // proposer
     /*
@@ -288,6 +288,16 @@ public class PaxosModuel {
     public String getLearnedValue(long round) {
     	return roundToTransaction.get(round);
     }
+    
+    /**
+     * Returns all learned values starting at the specified round
+     * @param round
+     * @return
+     */
+    public Map<Long, String> getAllLearnedValues(long round){
+    	SortedMap<Long, String> relevantRounds = roundToTransaction.tailMap(round);
+    	return relevantRounds;
+    }
 
     /**
      * If a majority have accepted, return true, else false
@@ -362,7 +372,7 @@ public class PaxosModuel {
             this.nodesInPaxos = (Set<Integer>)TwitterNode.jsonToMap(file.get("nodesInPaxos"), TypeSetInt);
             this.currentProposalNumber = (Long)TwitterNode.jsonToMap(file.get("currentProposalNumber"), TypeLong);
             this.stateOfRound = (Map<Long, AcceptorState>)TwitterNode.jsonToMap(file.get("stateOfRound"), TypeMapLongAcceptorState);
-            this.roundToTransaction = (Map<Long, String>)TwitterNode.jsonToMap(file.get("roundToTransaction"), TypeMapLongString);
+            this.roundToTransaction = (TreeMap<Long, String>)TwitterNode.jsonToMap(file.get("roundToTransaction"), TypeMapLongString);
             this.roundToUpdateRequest = (Map<Long, UpdateRequest>)TwitterNode.jsonToMap(file.get("roundToUpdateRequest"), TypeMapLongUpdateRequest);
 
             return true;
