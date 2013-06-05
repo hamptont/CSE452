@@ -16,13 +16,13 @@ public class TwitterNode extends RIONode {
 	public static double getDropRate() { return 0/100.0; }
 	public static double getDelayRate() { return 0/100.0; }
 
-	private Map<Long, Boolean> acked;
-	private byte[] msg;
+	private Map<Long, Boolean> acked; // requestId -> acked?
+	private byte[] msg; //received message
 
 	private long seq_num;
 	private Queue<String> pending_commands;
 	private Queue<String> active_commands;
-	private int commandInProgress;
+	private int commandsInProgress;
 
 	private String username;
 	private Map<String, String> tweets;
@@ -33,6 +33,8 @@ public class TwitterNode extends RIONode {
 	private Map<String, TransactionState> transactionStateMap;
 
 	private Map<Integer, TransactionData> clientMap;
+	private long currentTransactionRound;
+	//private long highestContinuous
 
 	private String role;
 
@@ -89,12 +91,48 @@ public class TwitterNode extends RIONode {
 	private class TransactionData {
 		public String tid;
 		public String rid;
+		public long proposedRound;
 		public Map<String, String> rid_action_map;
 	}
 
 	private class TwitterFile {
 		public String fileVersion;
 		public Map<String, String> contents;
+	}
+	
+	@Override
+	public void start() {
+		logOutput("Starting up...");
+
+		// Generate a user-level synoptic event to indicate that the node started.
+		logSynopticEvent("started");
+
+		// initialize local variables
+		acked = new HashMap<Long, Boolean>();
+		seq_num = 0L;
+		tweets = new HashMap<String, String>();
+		pending_commands = new LinkedList<String>();
+		commandsInProgress = 0;
+		gson = new Gson();
+		transaction_id = INVALID_TID;
+		transactionStateMap = new TreeMap<String, TransactionState>();
+		active_commands = new LinkedList<String>();
+		clientMap = new TreeMap<Integer, TransactionData>();
+		currentTransactionRound = 0L;
+		
+		// paxos module initialization
+		pax = new PaxosModuel(this);
+
+		// finish writing files, if necessary
+
+		readRecoveryFileAndApplyChanges();
+
+		// Write empty temp file
+		try{
+			writeToRecovery(new TreeMap<String,  String>());
+		}catch(IOException e){
+
+		}
 	}
 
 	@Override
@@ -169,6 +207,7 @@ public class TwitterNode extends RIONode {
 				transaction.tid = Long.toString(seq_num);
 				transaction.rid = request_id;
 				transaction.rid_action_map = new TreeMap<String, String>();
+				transaction.proposedRound = currentTransactionRound;
 				clientMap.put(client_id, transaction);
 				transactionStateMap.put(transaction.tid, TransactionState.IN_PROGRESS);
 			}
@@ -189,6 +228,7 @@ public class TwitterNode extends RIONode {
 
 				if(abort){
 					response = RPC_ABORT;
+					clientMap.remove(client_id);
 				}else{
 					response = RPC_COMMIT;
 					//process the actual commands
@@ -263,7 +303,8 @@ public class TwitterNode extends RIONode {
 
 	private boolean txnMustAbort(int clientId) {
 		TransactionData transaction = clientMap.get(clientId);
-		String txnId = transaction.tid;
+		//String txnId = transaction.tid;
+		String proposedVersion = Long.toString(transaction.proposedRound);
 		Map<String, String> operations = transaction.rid_action_map;
 
 		// to keep track of which files will be wholly deleted/made in this txn
@@ -287,8 +328,8 @@ public class TwitterNode extends RIONode {
 						String json = reader.readLine();
 						TwitterFile file = jsonToTwitfile(json);
 
-						if(txnId.compareTo(file.fileVersion) < 0) {
-							// if the transactionId is less than the file version,
+						if(proposedVersion.compareTo(file.fileVersion) <= 0) {
+							// if the proposedVersion is less than or equal to the file version,
 							// the file has been written and we need to abort
 							System.out.println("transaction aborted~");
 							return true;
@@ -313,8 +354,8 @@ public class TwitterNode extends RIONode {
 						String json = reader.readLine();
 						TwitterFile file = jsonToTwitfile(json);
 
-						if(json != null && txnId.compareTo(file.fileVersion) < 0) {
-							// if the transactionId is less than the file version,
+						if(json != null && proposedVersion.compareTo(file.fileVersion) < 0) {
+							// if the proposedVersion is less than or equal to the file version,
 							// the file has been written and we need to abort
 							System.out.println("transaction aborted~");
 							return true;
@@ -339,8 +380,8 @@ public class TwitterNode extends RIONode {
 						String json = reader.readLine();
 						TwitterFile file = jsonToTwitfile(json);
 
-						if(txnId.compareTo(file.fileVersion) < 0) {
-							// if the transactionId is less than the file version,
+						if(proposedVersion.compareTo(file.fileVersion) < 0) {
+							// if the proposedVersion is less than or equal to the file version,
 							// the file has been written and we need to abort
 							System.out.println("transaction aborted~");
 							return true;
@@ -402,7 +443,7 @@ public class TwitterNode extends RIONode {
 				Set<Long> outstandingAcks = rcp_read_multiple(usernames, seq_num);
 
 				callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{usernames, outstandingAcks});
-				commandInProgress++;
+				commandsInProgress++;
 				updateSeqNum(outstandingAcks);
 			}else if(filename.endsWith(TWEET_FILE_SUFFIX)){
 				//Return tweets to user
@@ -422,39 +463,7 @@ public class TwitterNode extends RIONode {
 		acked.put(Long.parseLong(request_id), true);
 	}
 
-	@Override
-	public void start() {
-		logOutput("Starting up...");
-
-		// Generate a user-level synoptic event to indicate that the node started.
-		logSynopticEvent("started");
-
-		// initialize local variables
-		acked = new HashMap<Long, Boolean>();
-		seq_num = 0L;
-		tweets = new HashMap<String, String>();
-		pending_commands = new LinkedList<String>();
-		commandInProgress = 0;
-		gson = new Gson();
-		transaction_id = INVALID_TID;
-		transactionStateMap = new TreeMap<String, TransactionState>();
-		active_commands = new LinkedList<String>();
-		clientMap = new TreeMap<Integer, TransactionData>();
-		
-		// paxos module initialization
-		pax = new PaxosModuel(this);
-
-		// finish writing files, if necessary
-
-		readRecoveryFileAndApplyChanges();
-
-		// Write empty temp file
-		try{
-			writeToRecovery(new TreeMap<String,  String>());
-		}catch(IOException e){
-
-		}
-	}
+	
 
 	/*
 	 * This method actually applies the twitter command to disk.
@@ -497,7 +506,7 @@ public class TwitterNode extends RIONode {
 				boolean append = false;
 				TreeMap<String, String> fileMap = new TreeMap<String, String>();
 				TwitterFile twitFile = new TwitterFile();
-				twitFile.fileVersion = Long.toString(seq_num);
+				twitFile.fileVersion = Long.toString(currentTransactionRound);
 				twitFile.contents = fileMap;
 				writeAheadLog.put(filename, twitfileToJson(twitFile));
 
@@ -584,7 +593,7 @@ public class TwitterNode extends RIONode {
 
 					//serialize object
 					TwitterFile twitFile = new TwitterFile();
-					twitFile.fileVersion = Long.toString(seq_num);
+					twitFile.fileVersion = Long.toString(currentTransactionRound);
 					twitFile.contents = fileMap;
 					String serialized = twitfileToJson(twitFile);
 					writeAheadLog.put(filename, serialized);
@@ -792,7 +801,7 @@ public class TwitterNode extends RIONode {
 			} else {
 				outstandingAcks = rcp_create(parameters, seq_num);
 				callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
-				commandInProgress++;
+				commandsInProgress++;
 			}
 		} else if(operation.equals("login")) {
 			if(parameters == null) {
@@ -806,7 +815,7 @@ public class TwitterNode extends RIONode {
 				username = parameters;
 				outstandingAcks = rcp_login(parameters, seq_num);
 				callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
-				commandInProgress++;
+				commandsInProgress++;
 			}
 		} else if(operation.equals("logout")) {
 			if(parameters == null) {
@@ -825,7 +834,7 @@ public class TwitterNode extends RIONode {
 			} else {
 				outstandingAcks = rcp_post(parameters, seq_num);
 				callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
-				commandInProgress++;
+				commandsInProgress++;
 			}
 		} else if(operation.equals("add")) {
 			if(parameters == null) {
@@ -834,7 +843,7 @@ public class TwitterNode extends RIONode {
 			} else {
 				outstandingAcks = rcp_add(parameters, seq_num);
 				callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
-				commandInProgress++;
+				commandsInProgress++;
 			}
 		} else if(operation.equals("delete")) {
 			if(parameters == null) {
@@ -843,7 +852,7 @@ public class TwitterNode extends RIONode {
 			} else {
 				outstandingAcks = rcp_delete(parameters, seq_num);
 				callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
-				commandInProgress++;
+				commandsInProgress++;
 			}
 		} else if(operation.equals("read")) {
 			if(parameters != null) {
@@ -851,17 +860,17 @@ public class TwitterNode extends RIONode {
 			} else {
 				outstandingAcks = rcp_read(parameters, seq_num);
 				callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
-				commandInProgress++;
+				commandsInProgress++;
 			}
 		} else if (operation.equals(COMMAND_START_TRANSACTION)){
 			outstandingAcks = rcp_start_transaction(seq_num);
 			callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
-			commandInProgress++;
+			commandsInProgress++;
 
 		} else if (operation.equals(COMMAND_COMMIT_TRANSACTION)){
 			outstandingAcks = rcp_commit_transaction(seq_num);
 			callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
-			commandInProgress++;
+			commandsInProgress++;
 
 		} else {
 			System.out.println("Unknown operation: " + operation);
@@ -999,7 +1008,7 @@ public class TwitterNode extends RIONode {
 
 	public void commandTickCallback(){
 		TransactionState state = transactionStateMap.get(transaction_id);
-		if(commandInProgress == 0 && !pending_commands.isEmpty()){
+		if(commandsInProgress == 0 && !pending_commands.isEmpty()){
 			if(state == TransactionState.COMMITTED){
 				pending_commands.remove();
 				transaction_id = INVALID_TID;
@@ -1007,7 +1016,7 @@ public class TwitterNode extends RIONode {
 				transaction_id = INVALID_TID;
 			}
 
-			if(transaction_id == INVALID_TID){
+			if(transaction_id.equals(INVALID_TID)){
 				active_commands.clear();
 				if(!pending_commands.isEmpty()){
 					active_commands.add(COMMAND_START_TRANSACTION);
@@ -1016,7 +1025,7 @@ public class TwitterNode extends RIONode {
 				}
 			}
 		}
-		if(commandInProgress == 0 && !active_commands.isEmpty()){
+		if(commandsInProgress == 0 && !active_commands.isEmpty()){
 			String command = active_commands.remove();
 			System.out.println("executing command: " + command);
 			onCommand_ordered(command);
@@ -1035,7 +1044,7 @@ public class TwitterNode extends RIONode {
 			for(Long ack : outstandingAcks) {
 				acked.remove(ack);
 			}
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			// retry
 			long min_ack = Long.MAX_VALUE;
@@ -1055,7 +1064,7 @@ public class TwitterNode extends RIONode {
 			for(Long ack : outstandingAcks) {
 				acked.remove(ack);
 			}
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			// retry
 			long min_ack = Long.MAX_VALUE;
@@ -1075,7 +1084,7 @@ public class TwitterNode extends RIONode {
 			for(Long ack : outstandingAcks) {
 				acked.remove(ack);
 			}
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			// retry
 			long min_ack = Long.MAX_VALUE;
@@ -1095,7 +1104,7 @@ public class TwitterNode extends RIONode {
 			for(Long ack : outstandingAcks) {
 				acked.remove(ack);
 			}
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			// retry
 			long min_ack = Long.MAX_VALUE;
@@ -1115,7 +1124,7 @@ public class TwitterNode extends RIONode {
 			for(Long ack : outstandingAcks) {
 				acked.remove(ack);
 			}
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			// retry
 			long min_ack = Long.MAX_VALUE;
@@ -1139,7 +1148,7 @@ public class TwitterNode extends RIONode {
 
 				System.out.println( val.substring(val.indexOf(TWEET_TIMESTAMP_TOKEN) + 1) + " : " + tweets.get(val));
 			}
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			long min_ack = Long.MAX_VALUE;
 			for(Long num : outstandingAcks){
@@ -1163,7 +1172,7 @@ public class TwitterNode extends RIONode {
 			System.out.println("Account created!");
 			System.out.println("response: " + response);
 
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			long min_ack = Long.MAX_VALUE;
 			for(Long num : outstandingAcks){
@@ -1187,7 +1196,7 @@ public class TwitterNode extends RIONode {
 			System.out.println("Transaction started");
 			System.out.println("response: " + response);
 
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			long min_ack = Long.MAX_VALUE;
 			for(Long num : outstandingAcks){
@@ -1212,7 +1221,7 @@ public class TwitterNode extends RIONode {
 			System.out.println("Transaction committed");
 			System.out.println("response: " + response);
 
-			commandInProgress--;
+			commandsInProgress--;
 		} else {
 			long min_ack = Long.MAX_VALUE;
 			for(Long num : outstandingAcks){
