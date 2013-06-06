@@ -1354,7 +1354,7 @@ public class TwitterNode extends RIONode {
 				prepareMessage.put(JSON_PAX_PROPOSAL_NUM, Long.toString(proposalNum));
 				prepareMessage.put(JSON_PAX_ROUND, roundStr);
 
-				Set<Integer> nodes = pax.getPaxosNodes();
+				Set<Integer> nodes = pax.getKnownPaxosNodes();
 				for(Integer paxNode : nodes) {
 					paxosRpc(paxNode, prepareMessage);
 				}
@@ -1403,7 +1403,7 @@ public class TwitterNode extends RIONode {
 				message.put(JSON_PAX_VALUE, pax.getProposedValue(round));
 				message.put(JSON_PAX_PROPOSAL_NUM, Long.toString(pax.getProposalNumForRound(round)));
 
-				Set<Integer> nodes = pax.getPaxosNodes();
+				Set<Integer> nodes = pax.getKnownPaxosNodes();
 				for(Integer paxNode : nodes) {
 					paxosRpc(paxNode, message);
 				}
@@ -1434,7 +1434,7 @@ public class TwitterNode extends RIONode {
 				pax.learn(round, pax.getProposedValue(round));
 
 				// send the value to the rest of the learners
-				Set<Integer> nodes = pax.getPaxosNodes();
+				Set<Integer> nodes = pax.getKnownPaxosNodes();
 				for(Integer paxNode : nodes) {
 					//TODO should we do a callback to make sure all learners have learned?
 					paxosRpc(paxNode, learnRequest);
@@ -1482,4 +1482,8 @@ public class TwitterNode extends RIONode {
 		RIOSend(destNode, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
 		System.out.printf("Paxos to %d: %s\n", destNode,json);
 	}
+	
+	//TODO note to self, just use paxos to join new nodes into paxos
+	//TODO hory crapp
+	//TODO make sure servers save state for latest round#, dont redo updates
 }
