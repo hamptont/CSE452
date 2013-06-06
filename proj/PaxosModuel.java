@@ -176,35 +176,31 @@ public class PaxosModuel {
 	 */
 	// acceptor
 	public boolean propose(long round, long n, String value){
+        if(value == null) {
+            throw new IllegalArgumentException("value cannot be null");
+        }
+        AcceptorState state = stateOfRound.get(round);
 
-		if(value == null) {
-			throw new IllegalArgumentException("value cannot be null");
-		}
-		AcceptorState state = stateOfRound.get(round);
+        if(state == null){
+            state = new AcceptorState();
+            state.value = EMPTY_VALUE;
+            state.highestAccepted = Long.MIN_VALUE;
+            state.highestPromised = Long.MIN_VALUE;
+            stateOfRound.put(round, state);
+        } else if (state.highestPromised > n) {
+            // if we're already promised higher
+            return false;
+        } else if(!state.value.equals(EMPTY_VALUE) && !state.value.equals(value)){
+            //Check to see if we have already accepted a different value
+            return false;
+        }
 
-		if(state != null && state.highestPromised > n){
-            System.out.println("e! 1");
-			return false;
-		}
+        state.value = value;
+        state.highestAccepted = n;
 
-		if(state == null){
-			state = new AcceptorState();
-			stateOfRound.put(round, state);
-		}
+        saveStateToDisk();
 
-		//Check to see if we have already accepted a different value
-		if(!state.value.equals(EMPTY_VALUE) && !state.value.equals(value)){
-            System.out.println("e! 2");
-            System.out.println(state.value);
-			return false;
-		}
-
-		state.value = value;
-		state.highestAccepted = n;
-
-		saveStateToDisk();
-
-		return true;
+        return true;
 	}
 
 	/**
