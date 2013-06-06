@@ -171,9 +171,11 @@ public class TwitterNode extends RIONode {
 		if(role.equals(CLIENT_NODE_ROLE)) {
 			//msg from server, client executes code
 			processMessageAsClient(msg);
-		} else if(role.equals(SERVER_NODE_ROLE)){
+		} else if(role.equals(SERVER_NODE_ROLE) && protocol == Protocol.TWITTER_PKT){
 			//msg from client, server executes code
-			processMessageAsServer(msg, from);
+			processClientMessageAsServer(msg, from);
+		} else if (role.equals(SERVER_NODE_ROLE) && protocol == Protocol.PAXOS_PKT) {
+			processPaxosMessageAsServer(msg,from);
 		} else if(role.equals(PAXOS_NODE_ROLE)) {
 			processMessageAsPaxos(msg, from);
 		} else {
@@ -1647,7 +1649,7 @@ public class TwitterNode extends RIONode {
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
 		String json = objectToJson(message, mapType);
 
-		RIOSend(destNode, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
+		RIOSend(destNode, Protocol.PAXOS_PKT, Utility.stringToByteArray(json));
 		System.out.printf("Paxos to %d: %s\n", destNode,json);
 	}
 	
