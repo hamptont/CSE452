@@ -294,15 +294,20 @@ public class TwitterNode extends RIONode {
 
                     //If new Transaction - send to PAXOS
 
-                    int requestingNodeId = 0; //TODO remove hardcode
-                    long round = Long.parseLong(msgMap.get(JSON_TRANSACTION_ID));
-                    String value = "TODO"; //TODO put real value
-                    long proposal_num = pax.startNewVote(requestingNodeId, round, value);
-                    while(proposal_num == -1L){
-                        proposal_num = pax.startNewVote(requestingNodeId, round, value);
+
+                    response_map.put(JSON_COMMAND, RPC_PAX_STORE_VALUE_REQUEST);
+                    response_map.put(JSON_PAX_ROUND, Long.toString(currentTransactionRound));
+                    Map<String, String> paxos_value = new TreeMap<String, String>();
+                    paxos_value.put("HELLO", "WORLD"); //TODO put value in here
+                    response_map.put(JSON_PAX_VALUE, mapToJson(paxos_value, mapType));
+                    int paxos_node_to_send_to = Integer.MIN_VALUE;
+                    for(Integer paxos_node : paxosNodes){
+                        paxos_node_to_send_to = Math.max(paxos_node_to_send_to, paxos_node);
                     }
 
-                    adsfasd
+                    System.out.println("Server sending message to paxos: " + response_map);
+                    RIOSend(paxos_node_to_send_to, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
+
 
                     /*
                     //If transaction has not already been applied to disk (not duplicate request)
@@ -1480,7 +1485,16 @@ public class TwitterNode extends RIONode {
 				prepareMessage.put(JSON_PAX_ROUND, roundStr);
 
 				Set<Integer> nodes = pax.getPaxosGroup();
+
+                //TODO REMOVE!!!!!!!!!!!
+                nodes = new TreeSet<Integer>();
+                nodes.add(1);
+                nodes.add(2);
+                nodes.add(3);
+
+                System.out.println("$$$$");
 				for(Integer paxNode : nodes) {
+                    System.out.println("paxNode"+paxNode);
 					paxosRpc(paxNode, prepareMessage);
 				}
 			}
@@ -1580,7 +1594,7 @@ public class TwitterNode extends RIONode {
 			Map<String, String> storedValueReply = new TreeMap<String, String>();
 			storedValueReply.put(JSON_COMMAND, RPC_PAX_STORED_VALUE);
 			storedValueReply.put(JSON_PAX_ROUND, roundStr);
-			storedValueReply.put(JSON_PAX_VALUE, pax.getLearnedValue(round));	
+			storedValueReply.put(JSON_PAX_VALUE, pax.getLearnedValue(round));
 
 			sendToAllServers(storedValueReply);
 		} else if (RPC_PAX_LEARN_ACQ.equals(command)){
