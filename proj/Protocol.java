@@ -23,6 +23,7 @@ public class Protocol {
     public static final int SESSION_START = 30;
     public static final int SESSION_START_ACK = 31;
     public static final int TWITTER_PKT = 32;
+    public static final int PAXOS_PKT = 33;
 
 	public static final int MAX_PROTOCOL = 127;
 
