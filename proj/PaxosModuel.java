@@ -176,31 +176,32 @@ public class PaxosModuel {
 	 */
 	// acceptor
 	public boolean propose(long round, long n, String value){
-        if(value == null) {
-            throw new IllegalArgumentException("value cannot be null");
-        }
-        AcceptorState state = stateOfRound.get(round);
+		if(value == null) {
+			throw new IllegalArgumentException("value cannot be null");
+		}
+		AcceptorState state = stateOfRound.get(round);
 
-        if(state == null){
-            state = new AcceptorState();
-            state.value = EMPTY_VALUE;
-            state.highestAccepted = Long.MIN_VALUE;
-            state.highestPromised = Long.MIN_VALUE;
-            stateOfRound.put(round, state);
-        } else if (state.highestPromised > n) {
-            // if we're already promised higher
-            return false;
-        } else if(!state.value.equals(EMPTY_VALUE) && !state.value.equals(value)){
-            //Check to see if we have already accepted a different value
-            return false;
-        }
+		if(state == null){
+			state = new AcceptorState();
+			state.value = EMPTY_VALUE;
+			state.highestAccepted = Long.MIN_VALUE;
+			state.highestPromised = Long.MIN_VALUE;
+			
+			stateOfRound.put(round, state);
+		} else if (state.highestPromised > n) {
+			// if we're already promised higher
+			return false;
+		} else if(!state.value.equals(EMPTY_VALUE) && !state.value.equals(value)){
+			//Check to see if we have already accepted a different value
+			return false;
+		}
 
-        state.value = value;
-        state.highestAccepted = n;
+		state.value = value;
+		state.highestAccepted = n;
 
-        saveStateToDisk();
+		saveStateToDisk();
 
-        return true;
+		return true;
 	}
 
 	/**
@@ -316,6 +317,10 @@ public class PaxosModuel {
 	public boolean accepted(long round, int node){
 		UpdateRequest request = roundToUpdateRequest.get(round);
 
+		if(request.accepted == null) {
+			request.accepted = new TreeSet<Integer>();
+		}
+		
 		request.accepted.add(node);
 
 		saveStateToDisk();
