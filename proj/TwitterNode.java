@@ -285,7 +285,7 @@ public class TwitterNode extends RIONode {
                            // apply_changes = false;
                             response_map.put(JSON_MSG, response);
                             System.out.println("Server sending response: " + response_map);
-                            RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
+                            RIOSend(client_id, Protocol.TWITTER_PKT, objectToJson(response_map, mapType).getBytes());
                             return;
                         }
                     }catch(IOException e){
@@ -299,14 +299,14 @@ public class TwitterNode extends RIONode {
                     response_map.put(JSON_PAX_ROUND, Long.toString(currentTransactionRound));
                     Map<String, String> paxos_value = new TreeMap<String, String>();
                     paxos_value.put("HELLO", "WORLD"); //TODO put value in here
-                    response_map.put(JSON_PAX_VALUE, mapToJson(paxos_value, mapType));
+                    response_map.put(JSON_PAX_VALUE, objectToJson(paxos_value, mapType));
                     int paxos_node_to_send_to = Integer.MIN_VALUE;
                     for(Integer paxos_node : paxosNodes){
                         paxos_node_to_send_to = Math.max(paxos_node_to_send_to, paxos_node);
                     }
 
                     System.out.println("Server sending message to paxos: " + response_map);
-                    RIOSend(paxos_node_to_send_to, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
+                    RIOSend(paxos_node_to_send_to, Protocol.TWITTER_PKT, objectToJson(response_map, mapType).getBytes());
 
 
                     /*
@@ -1490,11 +1490,13 @@ public class TwitterNode extends RIONode {
 
 				Set<Integer> nodes = pax.getPaxosGroup();
 
+                /*
                 //TODO REMOVE!!!!!!!!!!!
                 nodes = new TreeSet<Integer>();
                 nodes.add(1);
                 nodes.add(2);
                 nodes.add(3);
+                */
 
                 System.out.println("$$$$");
 				for(Integer paxNode : nodes) {
@@ -1633,6 +1635,7 @@ public class TwitterNode extends RIONode {
 	
 	private void sendToAllPaxos(Map<String, String> message) {
 		Set<Integer> nodes = pax.getPaxosGroup();
+        System.out.println("PAXOS NDOES: " + nodes);
 		for(Integer paxNode : nodes) {
 			paxosRpc(paxNode, message);
 		}
