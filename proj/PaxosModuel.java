@@ -169,7 +169,6 @@ public class PaxosModuel {
 	 */
 	// acceptor
 	public boolean propose(long round, long n, String value){
-
 		if(value == null) {
 			throw new IllegalArgumentException("value cannot be null");
 		}
@@ -180,6 +179,7 @@ public class PaxosModuel {
 			state.value = EMPTY_VALUE;
 			state.highestAccepted = Long.MIN_VALUE;
 			state.highestPromised = Long.MIN_VALUE;
+			
 			stateOfRound.put(round, state);
 		} else if (state.highestPromised > n) {
 			// if we're already promised higher
@@ -310,6 +310,10 @@ public class PaxosModuel {
 	public boolean accepted(long round, int node){
 		UpdateRequest request = roundToUpdateRequest.get(round);
 
+		if(request.accepted == null) {
+			request.accepted = new TreeSet<Integer>();
+		}
+		
 		request.accepted.add(node);
 
 		saveStateToDisk();
