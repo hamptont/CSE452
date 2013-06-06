@@ -7,6 +7,7 @@ import edu.washington.cs.cse490h.lib.PersistentStorageWriter;
 import edu.washington.cs.cse490h.lib.Utility;
 
 public class PaxosModuel {
+	private static final String EMPTY_VALUE = "";
 	private static final String PAXOS_STATE_FILENAME = "paxosStateFile";
 	private static Type TypeSetInt = new TypeToken<Set<Integer>>() {}.getType();
 	private static Type TypeLong = new TypeToken<Long>() {}.getType();
@@ -138,9 +139,10 @@ public class PaxosModuel {
 			state = new AcceptorState();
 			state.highestPromised = n;
 			state.highestAccepted = Long.MIN_VALUE;
+			state.value = EMPTY_VALUE;
 			stateOfRound.put(round, state);
 			response.n = n;
-			response.value = null;
+			response.value = EMPTY_VALUE;
 			return response;
 		}
 
@@ -245,11 +247,11 @@ public class PaxosModuel {
 
 		boolean majorityPromised;
 		if(request.promised.keySet().size() > request.participants.size() / 2){
-			long highestProposalNumWithNonNullValue = -1L;
+			long highestProposalNumWithNonEmptyValue = -1L;
 			for(Map.Entry<Integer, Promise> entry : request.promised.entrySet()) {
-				if(entry.getValue().value != null) {
-					if (entry.getValue().proposalNum > highestProposalNumWithNonNullValue){
-						highestProposalNumWithNonNullValue = entry.getValue().proposalNum;
+				if(!entry.getValue().value.equals(EMPTY_VALUE)) {
+					if (entry.getValue().proposalNum > highestProposalNumWithNonEmptyValue){
+						highestProposalNumWithNonEmptyValue = entry.getValue().proposalNum;
 						request.requestedValue = entry.getValue().value;
 					}                	
 				}
@@ -260,7 +262,7 @@ public class PaxosModuel {
 		}        
 
 		//TODO should this be here or above??
-				saveStateToDisk();
+		saveStateToDisk();
 
 		return majorityPromised;
 	}
@@ -275,11 +277,14 @@ public class PaxosModuel {
 		return updateReq == null ? -1L : updateReq.proposalNum;
 	}
 
+	/*
 	public int getProposingNodeId(long round){
 		UpdateRequest updateReq = roundToUpdateRequest.get(round);
 		return updateReq == null ? null : updateReq.requestingServerId;
 	}
-
+*/
+	
+	//learner
 	public String getLearnedValue(long round) {
 		return roundToTransaction.get(round);
 	}
@@ -289,6 +294,7 @@ public class PaxosModuel {
 	 * @param round
 	 * @return
 	 */
+	// learner
 	public Map<Long, String> getAllLearnedValues(long round){
 		SortedMap<Long, String> relevantRounds = roundToTransaction.tailMap(round);
 		return relevantRounds;
@@ -300,6 +306,7 @@ public class PaxosModuel {
 	 * @param node
 	 * @return
 	 */
+	//proposer
 	public boolean accepted(long round, int node){
 		UpdateRequest request = roundToUpdateRequest.get(round);
 
@@ -310,23 +317,35 @@ public class PaxosModuel {
 		return request.accepted.size() > knownPaxosNodes.size()/2;
 	}
 
+//	/**
+//	 * Adds the given node to the paxos group
+//	 * @param node
+//	 */
+//	public void addToPaxosPool(int node) {
+//		knownPaxosNodes.add(node);
+//	}
+//
+//	/**
+//	 * Removes the given node from the paxos group
+//	 * @param node
+//	 */
+//	public void removeFromPaxosPool(int node) {
+//		knownPaxosNodes.remove(node);
+//	}
+	
 	/**
-	 * Adds the given node to the paxos group
-	 * @param node
+	 * Sets the nodes that are acting as the current paxos group
+	 * @param paxosNodes
 	 */
-	public void addToPaxosPool(int node) {
-		knownPaxosNodes.add(node);
+	public void setPaxosGroup(Set<Integer> paxosNodes) {
+		knownPaxosNodes = new TreeSet<Integer>(paxosNodes);
 	}
 
 	/**
-	 * Removes the given node from the paxos group
-	 * @param node
+	 * Returns the set of currently known nodes in the paxos group
+	 * @return
 	 */
-	public void removeFromPaxosPool(int node) {
-		knownPaxosNodes.remove(node);
-	}
-
-	public Set<Integer> getKnownPaxosNodes(){
+	public Set<Integer> getPaxosGroup(){
 		return Collections.unmodifiableSet(knownPaxosNodes);
 	}
 

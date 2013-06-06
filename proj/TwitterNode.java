@@ -57,6 +57,9 @@ public class TwitterNode extends RIONode {
 
 	private static final String COMMAND_START_TRANSACTION = "start_transaction";
 	private static final String COMMAND_COMMIT_TRANSACTION = "commit_transaction";
+	
+	// usage: "m joinPaxosGroup n" where m should request to join the paxos group that n is a part of
+	private static final String COMMAND_JOIN_PAXOS = "joinPaxosGroup";
 
 	private static final String INVALID_TID = "-1";
 
@@ -71,6 +74,7 @@ public class TwitterNode extends RIONode {
 	private static final String STATUS_SUCCESS = "success";
 
 	// role assignment commands
+	// example command usage: "n assign server"
 	private static final String ASSIGN_ROLE_COMMAND = "assign";
 	private static final String SERVER_NODE_ROLE = "server";
 	private static final String PAXOS_NODE_ROLE = "paxos";
@@ -751,11 +755,23 @@ public class TwitterNode extends RIONode {
 		}
 
 		if(operation.equals(ASSIGN_ROLE_COMMAND)) {
-			if(isValidRole(parameters)) {
-				role = parameters;
+			if(isValidRole(split[1])) {
+				role = split[1];
 			} else {
-				System.out.println("Error: is not a valid role: "+ parameters);
+				System.out.println();
+				throw new IllegalArgumentException("Error: is not a valid role: "+ split[1]);
 			}
+		} else if (operation.equals(COMMAND_JOIN_PAXOS)){
+			if(!PAXOS_NODE_ROLE.equals(role)) {
+				throw new IllegalStateException("Error: must be assigned as a paxos node to join a paxos group.");
+			}
+			
+			int nodeToAsk = Integer.parseInt(split[1]);
+			
+			//TODO send message using request RPC_PAX_JOIN_GROUP_REQUEST
+			
+			Map<String, String> message = new TreeMap<String, String>();
+			message.put(JSON_COMMAND, RPC_PAX_JOIN_GROUP_REQUEST);
 		} else {
 			if(pending_commands.isEmpty()){
 				// start a command tick if necessary
@@ -1308,6 +1324,10 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_PAX_LEARN = "learn";
 	private static final String RPC_PAX_LEARN_ACQ = "learnAcq";
 	private static final String RPC_PAX_RECOVER_FROM_ROUND = "needUpdatesStartingAt";
+	private static final String RPC_PAX_JOIN_GROUP_REQUEST = "requestToJoinPaxos";
+	
+	private static final String UPDATE_PAXOS_MEMBERSHIP_KEY = "paxosMembershipUpdate";
+	//private static final String PAXOS_ENTRY_POINT_MEMBER_KEY = "";
 
 	private PaxosModuel pax;
 	private Set<Integer> knownServers;
@@ -1329,7 +1349,7 @@ public class TwitterNode extends RIONode {
 		}
 
 		//TODO short circuit if value already learned?
-		if(pax.getLearnedValue(round) != null){
+		if(pax.getLearnedValue(round) != null && !RPC_PAX_LEARN_ACQ.equals(command)){
 			// we already learned a value, good2go
 			Map<String, String> storedValueReply = new TreeMap<String, String>();
 			storedValueReply.put(JSON_COMMAND, RPC_PAX_STORED_VALUE);
@@ -1354,7 +1374,7 @@ public class TwitterNode extends RIONode {
 				prepareMessage.put(JSON_PAX_PROPOSAL_NUM, Long.toString(proposalNum));
 				prepareMessage.put(JSON_PAX_ROUND, roundStr);
 
-				Set<Integer> nodes = pax.getKnownPaxosNodes();
+				Set<Integer> nodes = pax.getPaxosGroup();
 				for(Integer paxNode : nodes) {
 					paxosRpc(paxNode, prepareMessage);
 				}
@@ -1403,7 +1423,7 @@ public class TwitterNode extends RIONode {
 				message.put(JSON_PAX_VALUE, pax.getProposedValue(round));
 				message.put(JSON_PAX_PROPOSAL_NUM, Long.toString(pax.getProposalNumForRound(round)));
 
-				Set<Integer> nodes = pax.getKnownPaxosNodes();
+				Set<Integer> nodes = pax.getPaxosGroup();
 				for(Integer paxNode : nodes) {
 					paxosRpc(paxNode, message);
 				}
@@ -1434,7 +1454,7 @@ public class TwitterNode extends RIONode {
 				pax.learn(round, pax.getProposedValue(round));
 
 				// send the value to the rest of the learners
-				Set<Integer> nodes = pax.getKnownPaxosNodes();
+				Set<Integer> nodes = pax.getPaxosGroup();
 				for(Integer paxNode : nodes) {
 					//TODO should we do a callback to make sure all learners have learned?
 					paxosRpc(paxNode, learnRequest);
@@ -1446,7 +1466,9 @@ public class TwitterNode extends RIONode {
 				txnConfirmMsg.put(JSON_COMMAND, RPC_PAX_STORED_VALUE);
 				txnConfirmMsg.put(JSON_PAX_ROUND, roundStr);
 				txnConfirmMsg.put(JSON_PAX_VALUE, msgMap.get(JSON_PAX_VALUE));
-				paxosRpc(pax.getProposingNodeId(round), txnConfirmMsg);
+				
+				//TODO just send to learners?
+				//paxosRpc(pax.getProposingNodeId(round), txnConfirmMsg);
 			}
 		} else if (RPC_PAX_LEARN.equals(command)) {
 			pax.learn(round, msgMap.get(JSON_PAX_VALUE));
@@ -1466,8 +1488,9 @@ public class TwitterNode extends RIONode {
 				paxosRpc(serverId, storedValueReply);
 			}
 		} else if (RPC_PAX_LEARN_ACQ.equals(command)){
-			//TODO will never get here if we use the short-circuit
 			pax.learned(round, sendingNode);
+		} else if (RPC_PAX_JOIN_GROUP_REQUEST.equals(command)){
+			//TODO
 		} else {
 			throw new IllegalArgumentException("unknown command: "+command);
 		}
