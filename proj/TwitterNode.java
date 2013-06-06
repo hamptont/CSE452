@@ -159,7 +159,7 @@ public class TwitterNode extends RIONode {
 		// extract the sequence num from the message, update this node's seq_num
 		String json = packetBytesToString(msg);
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
-		Map<String, String> map = (Map<String, String>)jsonToMap(json, mapType);
+		Map<String, String> map = (Map<String, String>)jsonToObject(json, mapType);
 
 
 		long remote_seq_num = Long.parseLong(map.get(JSON_CURRENT_SEQ_NUM));
@@ -187,7 +187,7 @@ public class TwitterNode extends RIONode {
 	private void processMessageAsServer(byte[] msg, int client_id) {
 		String msgJson = packetBytesToString(msg);
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
-		Map<String, String> msgMap = (Map<String, String>)jsonToMap(msgJson, mapType);
+		Map<String, String> msgMap = (Map<String, String>)jsonToObject(msgJson, mapType);
 		String received = msgMap.get(JSON_MSG);
 		String request_id = msgMap.get(JSON_REQUEST_ID);
 
@@ -328,7 +328,7 @@ public class TwitterNode extends RIONode {
                         //Add client requests to write ahead log
                         for(String s : requests.keySet()){
                             String json = requests.get(s);
-                            Map<String, String> jsonMap = (Map<String, String>)jsonToMap(json, mapType);
+                            Map<String, String> jsonMap = (Map<String, String>)jsonToObject(json, mapType);
                             processTransaction(jsonMap, writeAheadLog);
                             System.out.println("TRANSACTION BEING ADDED TO WRITE AHEAD LOG: " + json);
                         }
@@ -346,7 +346,7 @@ public class TwitterNode extends RIONode {
                     //All transaction modifications have been applied to write ahead log
                     //Okay to send commit success to client
                     System.out.println("Server sending response: " + response_map);
-                    RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
+                    RIOSend(client_id, Protocol.TWITTER_PKT, objectToJson(response_map, mapType).getBytes());
 
                     //If transaction has not already been applied to disk (not duplicate request)
                     if(apply_changes){
@@ -393,7 +393,7 @@ public class TwitterNode extends RIONode {
 		response_map.put(JSON_MSG, response);
 
 		System.out.println("Server sending response: " + response_map);
-		RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
+		RIOSend(client_id, Protocol.TWITTER_PKT, objectToJson(response_map, mapType).getBytes());
 	}
 
 	private boolean txnMustAbort(int clientId) {
@@ -410,7 +410,7 @@ public class TwitterNode extends RIONode {
 		// make sure that the file version is consistent with the transaction
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
 		for(Entry<String, String> op : operations.entrySet()) {
-			Map<String,String> map = (Map<String,String>)jsonToMap(op.getValue(), mapType);
+			Map<String,String> map = (Map<String,String>)jsonToObject(op.getValue(), mapType);
 
 			String command = map.get(JSON_MSG).split("\\s")[0];
 			String filename = map.get(JSON_MSG).split("\\s")[1];
@@ -504,7 +504,7 @@ public class TwitterNode extends RIONode {
 	private void processMessageAsClient(byte[] msg) {		
 		String json = packetBytesToString(msg);
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
-		Map<String, String> map = (Map<String, String>)jsonToMap(json, mapType);
+		Map<String, String> map = (Map<String, String>)jsonToObject(json, mapType);
 		String received = map.get(JSON_MSG);
 		String request_id = map.get(JSON_REQUEST_ID);
 
@@ -666,7 +666,7 @@ public class TwitterNode extends RIONode {
 				//read in treemap from file
 
 				Type mapType = new TypeToken<Map<String, String>>() {}.getType();
-				Map<String, String> fileMap = (Map<String, String>)jsonToMap(fileContents, mapType);
+				Map<String, String> fileMap = (Map<String, String>)jsonToObject(fileContents, mapType);
 
 				String unfollow_username = received.substring(command.length() + filename.length() + 2);
 				if(fileMap.values().contains(unfollow_username)){
@@ -738,20 +738,20 @@ public class TwitterNode extends RIONode {
 	private void writeFile(String filename, Map<String, String> contents) throws IOException {
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
 
-		String jsonMap = mapToJson(contents, mapType);
+		String jsonMap = objectToJson(contents, mapType);
 		writeFile(filename, jsonMap);
 	}
 
-	// turns the Map into the equivalent json
-	public static String mapToJson(Object map, Type mapType) {
+	// turns the Object into the equivalent json
+	public static String objectToJson(Object obj, Type objType) {
 
-		return gson.toJson(map, mapType);
+		return gson.toJson(obj, objType);
 	}
 
-	// turns the json into a Map
-	public static Object jsonToMap(String json, Type mapType){
+	// turns the json into an Object
+	public static Object jsonToObject(String json, Type objType){
 
-		return gson.fromJson(json, mapType);
+		return gson.fromJson(json, objType);
 	}
 
 
@@ -780,7 +780,7 @@ public class TwitterNode extends RIONode {
 		//read recovery file
 		PersistentStorageReader in = super.getReader(filename);
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
-		Map<String, String> recoveryMap = (Map<String, String>)jsonToMap(in.readLine(), mapType);
+		Map<String, String> recoveryMap = (Map<String, String>)jsonToObject(in.readLine(), mapType);
 		in.close();
 		return recoveryMap;
 	}
@@ -1012,7 +1012,7 @@ public class TwitterNode extends RIONode {
 		json_map.put(JSON_TRANSACTION_ID, transaction_id);
 
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
-		String json = mapToJson(json_map, mapType);
+		String json = objectToJson(json_map, mapType);
 
 		RIOSend(node, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
 		System.out.println("done sending");
@@ -1410,10 +1410,13 @@ public class TwitterNode extends RIONode {
 	public String toString() {
 		return super.toString();
 	}
+	
 
 	/*
 	 * PAXOS STUFF
 	 */
+	
+	private static final Type PAXOS_GROUP_TYPE =  new TypeToken<Set<Integer>>() {}.getType();
 
 	// the JSON keys for messages paxos is sending
 	private static final String JSON_COMMAND = "rpc";
@@ -1447,7 +1450,7 @@ public class TwitterNode extends RIONode {
 		System.out.println("msg received by paxos: " + msgJson);
 
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
-		Map<String, String> msgMap = (Map<String, String>)jsonToMap(msgJson, mapType);
+		Map<String, String> msgMap = (Map<String, String>)jsonToObject(msgJson, mapType);
 		String command = msgMap.get(JSON_COMMAND);
 		String roundStr = msgMap.get(JSON_PAX_ROUND);
 		long round = -1L;
@@ -1470,6 +1473,7 @@ public class TwitterNode extends RIONode {
 
 		// server -> paxos
 		if(RPC_PAX_STORE_VALUE_REQUEST.equals(command)) {
+			// a server is requesting that a node 
 			knownServers.add(sendingNode);
 
 			//TODO detect duplicate response from same client,
@@ -1582,7 +1586,7 @@ public class TwitterNode extends RIONode {
 				//TODO just send to learners?
 				//paxosRpc(pax.getProposingNodeId(round), txnConfirmMsg);
 			}
-		} else if (RPC_PAX_LEARN.equals(command)) {
+		} else if (RPC_PAX_LEARN.equals(command) || RPC_PAX_STORED_VALUE.equals(command)) {
 			pax.learn(round, msgMap.get(JSON_PAX_VALUE));
 			Map<String, String> learnAck = new TreeMap<String, String>();
 			learnAck.put(JSON_COMMAND, RPC_PAX_LEARN_ACQ);
@@ -1605,6 +1609,10 @@ public class TwitterNode extends RIONode {
 				// we're done' it just needs to be informed of the results
 				Map<String, String> membershipResponse = new TreeMap<String, String>();
 				membershipResponse.put(JSON_COMMAND, RPC_PAX_JOIN_GROUP_CONFIRM);
+				
+				String groupJson = objectToJson(pax.getPaxosGroup(), PAXOS_GROUP_TYPE);
+				
+				membershipResponse.put(JSON_PAX_GROUP_MEMBERS, groupJson);
 			} else {
 				Map<String, String> membershipUpdateProposal = new TreeMap<String,String>();
 				membershipUpdateProposal.put(UPDATE_PAXOS_MEMBERSHIP_KEY, "TRUE");
@@ -1634,7 +1642,7 @@ public class TwitterNode extends RIONode {
 		message.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
 
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
-		String json = mapToJson(message, mapType);
+		String json = objectToJson(message, mapType);
 
 		RIOSend(destNode, Protocol.TWITTER_PKT, Utility.stringToByteArray(json));
 		System.out.printf("Paxos to %d: %s\n", destNode,json);
