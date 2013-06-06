@@ -34,7 +34,6 @@ public class TwitterNode extends RIONode {
 
 	private Map<Integer, TransactionData> clientMap;
 	private long currentTransactionRound;
-	//private long highestContinuous
 
 	private String role;
 
