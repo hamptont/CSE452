@@ -37,6 +37,7 @@ public class TwitterNode extends RIONode {
 
 	private String role;
 
+
 	/**
 	 * String constants
 	 */
@@ -47,6 +48,7 @@ public class TwitterNode extends RIONode {
 	private static final String FOLLOWERS_FILE_SUFFIX = "-following";
 	private static final String INFO_FILE_SUFFIX = "-info";
 	private static final String RECOVERY_FILENAME = "server_temp";
+    private static final String STORED_TRANSACTIONS_FILENAME = "stored_transactions";
 
 	private static final String TWEET_TIMESTAMP_TOKEN = "~";
 
@@ -96,6 +98,7 @@ public class TwitterNode extends RIONode {
 		public String rid;
 		public long proposedRound;
 		public Map<String, String> rid_action_map;
+        public int client_id;
 	}
 
 	private class TwitterFile {
@@ -200,20 +203,42 @@ public class TwitterNode extends RIONode {
 				//transaction already started -- duplicate message
 				//return transaction ID of current transaction
 				response_map.put(JSON_TRANSACTION_ID, transaction.tid);
-			} else {
-				//set up transaction start
-				response_map.put(JSON_TRANSACTION_ID, Long.toString(currentTransactionRound));
-				transaction = new TransactionData();
-				transaction.tid = Long.toString(currentTransactionRound);
-				transaction.rid = request_id;
-				transaction.rid_action_map = new TreeMap<String, String>();
-				transaction.proposedRound = currentTransactionRound;
-				clientMap.put(client_id, transaction);
-				transactionStateMap.put(transaction.tid, TransactionState.IN_PROGRESS);
-			}
+                response = RPC_START_TXN;
 
-			response = RPC_START_TXN;
+            } else {
+                //Check if transaction has already been committed and saved to disk
+                boolean transaction_finished = false;
+                String client_transaction_identifier = client_id + TWEET_TIMESTAMP_TOKEN + msgMap.get(JSON_TRANSACTION_ID);
+                try{
+                    PersistentStorageReader in = super.getReader(STORED_TRANSACTIONS_FILENAME);
+                    String fileContents = in.readLine();
+                    in.close();
+                    Map<String, String> processedTransactions = jsonToTwitfile(fileContents).contents;
+                    if(processedTransactions.containsKey(client_transaction_identifier)){
+                        transaction_finished = true;
+                    }
+                }catch(IOException e){
 
+                }
+                if(transaction_finished){
+                    response = RPC_COMMIT;
+
+                } else {
+                    //new transaction
+                    //set up transaction start
+                    response_map.put(JSON_TRANSACTION_ID, Long.toString(currentTransactionRound));
+                    transaction = new TransactionData();
+                    transaction.tid = Long.toString(currentTransactionRound);
+                    transaction.rid = request_id;
+                    transaction.rid_action_map = new TreeMap<String, String>();
+                    transaction.proposedRound = currentTransactionRound;
+                    transaction.client_id = client_id;
+                    clientMap.put(client_id, transaction);
+                    transactionStateMap.put(transaction.tid, TransactionState.IN_PROGRESS);
+
+                    response = RPC_START_TXN;
+                }
+            }
 		} else if(command.equals(RPC_COMMIT)) {
 			//request to commit transaction
 			TransactionData transaction = clientMap.get(client_id);
@@ -233,39 +258,71 @@ public class TwitterNode extends RIONode {
 					response = RPC_COMMIT;
 					//process the actual commands
 
-					//write each change to the write ahead log
-					Map<String, String> writeAheadLog = new TreeMap<String, String>();
-					for(String s : requests.keySet()){
-						String json = requests.get(s);
-						Map<String, String> jsonMap = (Map<String, String>)jsonToMap(json, mapType);
-						processTransaction(jsonMap, writeAheadLog);
-						System.out.println("TRANSACTION BEING ADDED TO WRITE AHEAD LOG: " + json);
-					}
 
-					//write transaction modifications to write ahead log
-					try{
-						writeFile(RECOVERY_FILENAME, writeAheadLog);
-					}catch(IOException e){
+                    //Check to see if transaction changes have already been applied to disk
+                    boolean apply_changes = true;
+                    Map<String, String> processedTransactions = null;
+                    String client_transaction_identifier = client_id + TWEET_TIMESTAMP_TOKEN + msgMap.get(JSON_TRANSACTION_ID);
+                    try{
+                        PersistentStorageReader in = super.getReader(STORED_TRANSACTIONS_FILENAME);
+                        String fileContents = in.readLine();
+                        in.close();
+                        processedTransactions = jsonToTwitfile(fileContents).contents;
+                        if(processedTransactions.containsKey(client_transaction_identifier)){
+                            apply_changes = false;
+                        }
+                    }catch(IOException e){
 
-					}
+                    }
 
-					response_map.put(JSON_MSG, response);
+                    if(apply_changes){
+                        Map<String, String> writeAheadLog = new TreeMap<String, String>();
 
-					//All transaction modifications have been applied to write ahead log
-					//Okay to send commit success to client
-					System.out.println("Server sending response: " + response_map);
-					RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
+                        //Add STORED_TRANSACTIONS_FILENAME to write ahead log
+                        if(processedTransactions == null){
+                            processedTransactions = new TreeMap<String, String>();
+                        }
+                        processedTransactions.put(client_transaction_identifier, "");
 
-					//move modified files from write ahead log to disk
-					readRecoveryFileAndApplyChanges();
+                        TwitterFile twitFile = new TwitterFile();
+                        twitFile.fileVersion = Long.toString(currentTransactionRound);
+                        twitFile.contents = processedTransactions;
+                        writeAheadLog.put(STORED_TRANSACTIONS_FILENAME, twitfileToJson(twitFile));
 
-					//Write empty temp file to clear out write ahead log
-					try{
-						writeToRecovery(new TreeMap<String,  String>());
-					}catch(IOException e){
+                        //Add client requests to write ahead log
+                        for(String s : requests.keySet()){
+                            String json = requests.get(s);
+                            Map<String, String> jsonMap = (Map<String, String>)jsonToMap(json, mapType);
+                            processTransaction(jsonMap, writeAheadLog);
+                            System.out.println("TRANSACTION BEING ADDED TO WRITE AHEAD LOG: " + json);
+                        }
 
-					}
+                        //write transaction modifications to write ahead log
+                        try{
+                            writeFile(RECOVERY_FILENAME, writeAheadLog);
+                        }catch(IOException e){
 
+                        }
+                    }
+
+                    response_map.put(JSON_MSG, response);
+
+                    //All transaction modifications have been applied to write ahead log
+                    //Okay to send commit success to client
+                    System.out.println("Server sending response: " + response_map);
+                    RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
+
+                    if(apply_changes){
+                        //move modified files from write ahead log to disk
+                        readRecoveryFileAndApplyChanges();
+
+                        //Write empty temp file to clear out write ahead log
+                        try{
+                            writeToRecovery(new TreeMap<String,  String>());
+                        }catch(IOException e){
+
+                        }
+                    }
 					return;
 				}
 			}
@@ -503,11 +560,10 @@ public class TwitterNode extends RIONode {
 		if(command.equals(RPC_CREATE)) {
 			response += STATUS_SUCCESS;
 			try{
-				boolean append = false;
 				TreeMap<String, String> fileMap = new TreeMap<String, String>();
 				TwitterFile twitFile = new TwitterFile();
-				twitFile.fileVersion = Long.toString(currentTransactionRound);
-				twitFile.contents = fileMap;
+                twitFile.fileVersion = Long.toString(currentTransactionRound);
+                twitFile.contents = fileMap;
 				writeAheadLog.put(filename, twitfileToJson(twitFile));
 
 			}catch(Exception e){
