@@ -175,17 +175,17 @@ public class PaxosModuel {
 		}
 		AcceptorState state = stateOfRound.get(round);
 
-		if(state != null && state.highestPromised > n){
-			return false;
-		}
-
 		if(state == null){
 			state = new AcceptorState();
+			state.value = EMPTY_VALUE;
+			state.highestAccepted = Long.MIN_VALUE;
+			state.highestPromised = Long.MIN_VALUE;
 			stateOfRound.put(round, state);
-		}
-
-		//Check to see if we have already accepted a different value
-		if(state.value != null && !state.value.equals(value)){
+		} else if (state.highestPromised > n) {
+			// if we're already promised higher
+			return false;
+		} else if(!state.value.equals(EMPTY_VALUE) && !state.value.equals(value)){
+			//Check to see if we have already accepted a different value
 			return false;
 		}
 
