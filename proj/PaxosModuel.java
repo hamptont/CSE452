@@ -9,11 +9,11 @@ import edu.washington.cs.cse490h.lib.Utility;
 public class PaxosModuel {
 	private static final String EMPTY_VALUE = "";
 	private static final String PAXOS_STATE_FILENAME = "paxosStateFile";
-	private static Type TypeSetInt = new TypeToken<Set<Integer>>() {}.getType();
-	private static Type TypeLong = new TypeToken<Long>() {}.getType();
-	private static Type TypeMapLongAcceptorState = new TypeToken<Map<Long, AcceptorState>>() {}.getType();
-	private static Type TypeMapLongString = new TypeToken<Map<Long, String>>() {}.getType();
-	private static Type TypeMapLongUpdateRequest = new TypeToken<Map<Long, UpdateRequest>>() {}.getType();
+	private static final Type SET_INT_TYPE = new TypeToken<Set<Integer>>() {}.getType();
+	private static final Type LONG_TYPE = new TypeToken<Long>() {}.getType();
+	private static final Type MAP_LONG_ACCEPTORSTATE_TYPE = new TypeToken<Map<Long, AcceptorState>>() {}.getType();
+	private static final Type MAP_LONG_STRING_TYPE = new TypeToken<Map<Long, String>>() {}.getType();
+	private static final Type MAP_LONG_UPDATE_REQUEST_TYPE = new TypeToken<Map<Long, UpdateRequest>>() {}.getType();
 
 
 	private Set<Integer> knownPaxosNodes;
@@ -334,11 +334,13 @@ public class PaxosModuel {
 //	}
 	
 	/**
-	 * Sets the nodes that are acting as the current paxos group
+	 * Sets the nodes that are acting as the current paxos group.
+	 * Saves the state to disk.
 	 * @param paxosNodes
 	 */
 	public void setPaxosGroup(Set<Integer> paxosNodes) {
 		knownPaxosNodes = new TreeSet<Integer>(paxosNodes);
+		saveStateToDisk();
 	}
 
 	/**
@@ -359,14 +361,14 @@ public class PaxosModuel {
 	public void saveStateToDisk(){
 		Map<String, String> contents = new TreeMap<String, String>();
 
-		contents.put("nodesInPaxos", TwitterNode.mapToJson(knownPaxosNodes, TypeSetInt));
-		contents.put("currentProposalNumber", TwitterNode.mapToJson(currentProposalNumber, TypeLong));
-		contents.put("stateOfRound", TwitterNode.mapToJson(stateOfRound, TypeMapLongAcceptorState));
-		contents.put("roundToTransaction", TwitterNode.mapToJson(roundToTransaction, TypeMapLongString));
-		contents.put("roundToUpdateRequest", TwitterNode.mapToJson(roundToUpdateRequest, TypeMapLongUpdateRequest));
+		contents.put("nodesInPaxos", TwitterNode.objectToJson(knownPaxosNodes, SET_INT_TYPE));
+		contents.put("currentProposalNumber", TwitterNode.objectToJson(currentProposalNumber, LONG_TYPE));
+		contents.put("stateOfRound", TwitterNode.objectToJson(stateOfRound, MAP_LONG_ACCEPTORSTATE_TYPE));
+		contents.put("roundToTransaction", TwitterNode.objectToJson(roundToTransaction, MAP_LONG_STRING_TYPE));
+		contents.put("roundToUpdateRequest", TwitterNode.objectToJson(roundToUpdateRequest, MAP_LONG_UPDATE_REQUEST_TYPE));
 
 		Type TypeMapStringString = new TypeToken<Map<String, String>>() {}.getType();
-		String json = TwitterNode.mapToJson(contents, TypeMapStringString);
+		String json = TwitterNode.objectToJson(contents, TypeMapStringString);
 		System.out.println("JSON saved to disk: " + json);
 
 		try{
@@ -385,11 +387,11 @@ public class PaxosModuel {
 			Map<String, String> file = encompassingNode.readJsonFile(PAXOS_STATE_FILENAME);
 			System.out.println("JSON read from disk: " + file.toString());
 
-			this.knownPaxosNodes = (Set<Integer>)TwitterNode.jsonToMap(file.get("nodesInPaxos"), TypeSetInt);
-			this.currentProposalNumber = (Long)TwitterNode.jsonToMap(file.get("currentProposalNumber"), TypeLong);
-			this.stateOfRound = (Map<Long, AcceptorState>)TwitterNode.jsonToMap(file.get("stateOfRound"), TypeMapLongAcceptorState);
-			this.roundToTransaction = (TreeMap<Long, String>)TwitterNode.jsonToMap(file.get("roundToTransaction"), TypeMapLongString);
-			this.roundToUpdateRequest = (Map<Long, UpdateRequest>)TwitterNode.jsonToMap(file.get("roundToUpdateRequest"), TypeMapLongUpdateRequest);
+			this.knownPaxosNodes = (Set<Integer>)TwitterNode.jsonToObject(file.get("nodesInPaxos"), SET_INT_TYPE);
+			this.currentProposalNumber = (Long)TwitterNode.jsonToObject(file.get("currentProposalNumber"), LONG_TYPE);
+			this.stateOfRound = (Map<Long, AcceptorState>)TwitterNode.jsonToObject(file.get("stateOfRound"), MAP_LONG_ACCEPTORSTATE_TYPE);
+			this.roundToTransaction = (TreeMap<Long, String>)TwitterNode.jsonToObject(file.get("roundToTransaction"), MAP_LONG_STRING_TYPE);
+			this.roundToUpdateRequest = (Map<Long, UpdateRequest>)TwitterNode.jsonToObject(file.get("roundToUpdateRequest"), MAP_LONG_UPDATE_REQUEST_TYPE);
 
 			return true;
 		}catch(Exception e){
