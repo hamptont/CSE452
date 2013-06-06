@@ -266,7 +266,8 @@ public class TwitterNode extends RIONode {
 
 
                     //Check to see if transaction changes have already been applied to disk
-                    boolean apply_changes = true;
+                   // boolean apply_changes = true;
+                    //If transaction has already been applied to disk (duplicate transaction request), respond to client with success
                     Map<String, String> processedTransactions = null;
                     String client_transaction_identifier = client_id + TWEET_TIMESTAMP_TOKEN + msgMap.get(JSON_TRANSACTION_ID);
                     try{
@@ -275,12 +276,30 @@ public class TwitterNode extends RIONode {
                         in.close();
                         processedTransactions = jsonToTwitfile(fileContents).contents;
                         if(processedTransactions.containsKey(client_transaction_identifier)){
-                            apply_changes = false;
+                           // apply_changes = false;
+                            response_map.put(JSON_MSG, response);
+                            System.out.println("Server sending response: " + response_map);
+                            RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
+                            return;
                         }
                     }catch(IOException e){
 
                     }
 
+                    //If new Transaction - send to PAXOS
+
+                    int requestingNodeId = 0; //TODO remove hardcode
+                    long round = Long.parseLong(msgMap.get(JSON_TRANSACTION_ID));
+                    String value = "TODO"; //TODO put real value
+                    long proposal_num = pax.startNewVote(requestingNodeId, round, value);
+                    while(proposal_num == -1L){
+                        proposal_num = pax.startNewVote(requestingNodeId, round, value);
+                    }
+
+                    adsfasd
+
+                    /*
+                    //If transaction has not already been applied to disk (not duplicate request)
                     if(apply_changes){
                         Map<String, String> writeAheadLog = new TreeMap<String, String>();
 
@@ -318,6 +337,7 @@ public class TwitterNode extends RIONode {
                     System.out.println("Server sending response: " + response_map);
                     RIOSend(client_id, Protocol.TWITTER_PKT, mapToJson(response_map, mapType).getBytes());
 
+                    //If transaction has not already been applied to disk (not duplicate request)
                     if(apply_changes){
                         //move modified files from write ahead log to disk
                         readRecoveryFileAndApplyChanges();
@@ -329,6 +349,7 @@ public class TwitterNode extends RIONode {
 
                         }
                     }
+                    */
 					return;
 				}
 			}
