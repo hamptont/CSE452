@@ -92,6 +92,13 @@ public class PaxosModuel {
 		// proposer
 		roundToUpdateRequest = new TreeMap<Long, UpdateRequest>();
 		//	}
+
+        //TODO REMOVE
+        Set<Integer> nodes = new TreeSet<Integer>();
+        nodes.add(1);
+        nodes.add(2);
+        nodes.add(3);
+        setPaxosGroup(nodes);
 	}
 
 	/**
@@ -176,6 +183,7 @@ public class PaxosModuel {
 		AcceptorState state = stateOfRound.get(round);
 
 		if(state != null && state.highestPromised > n){
+            System.out.println("e! 1");
 			return false;
 		}
 
@@ -185,7 +193,9 @@ public class PaxosModuel {
 		}
 
 		//Check to see if we have already accepted a different value
-		if(state.value != null && !state.value.equals(value)){
+		if(!state.value.equals(EMPTY_VALUE) && !state.value.equals(value)){
+            System.out.println("e! 2");
+            System.out.println(state.value);
 			return false;
 		}
 

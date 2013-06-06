@@ -1490,13 +1490,6 @@ public class TwitterNode extends RIONode {
 
 				Set<Integer> nodes = pax.getPaxosGroup();
 
-                /*
-                //TODO REMOVE!!!!!!!!!!!
-                nodes = new TreeSet<Integer>();
-                nodes.add(1);
-                nodes.add(2);
-                nodes.add(3);
-                */
 
                 System.out.println("$$$$");
 				for(Integer paxNode : nodes) {
@@ -1555,6 +1548,7 @@ public class TwitterNode extends RIONode {
 			long proposalNum = Long.parseLong(proposalNumStr);
 			boolean success = pax.propose(round, proposalNum, msgMap.get(JSON_PAX_VALUE));
 			if(success){
+                System.out.println("~~~~~");
 				// if we are accepting that value
 				Map<String, String> response = new TreeMap<String, String>();
 				response.put(JSON_COMMAND, RPC_PAX_ACCEPTED);
