@@ -32,8 +32,10 @@ public class TwitterNode extends RIONode {
 
 	private Map<String, TransactionState> transactionStateMap;
 
+	//TODO are we storing all of this in file?
 	private Map<Integer, TransactionData> clientMap;
 	private long currentTransactionRound;
+	private Set<Integer> paxosNodes;
 
 	private String role;
 
@@ -60,8 +62,11 @@ public class TwitterNode extends RIONode {
 	private static final String COMMAND_START_TRANSACTION = "start_transaction";
 	private static final String COMMAND_COMMIT_TRANSACTION = "commit_transaction";
 	
-	// usage: "m joinPaxosGroup n" where m should request to join the paxos group that n is a part of
+	// usage: "n joinPaxosGroup m" where n should request to join the paxos group that m is a part of
 	private static final String COMMAND_JOIN_PAXOS = "joinPaxosGroup";
+	
+	// usage: "n usePaxosGroup m" where n is a server which should use m as its paxos entry point
+	private static final String COMMAND_USE_PAXOS = "usePaxosGroup";
 
 	private static final String INVALID_TID = "-1";
 
@@ -126,6 +131,7 @@ public class TwitterNode extends RIONode {
 		clientMap = new TreeMap<Integer, TransactionData>();
 		currentTransactionRound = 0L;
 		knownServers = new TreeSet<Integer>();
+		paxosNodes = new TreeSet<Integer>();
 
 		// paxos module initialization
 		pax = new PaxosModuel(this);
@@ -825,9 +831,16 @@ public class TwitterNode extends RIONode {
 			int nodeToAsk = Integer.parseInt(split[1]);
 			
 			//TODO send message using request RPC_PAX_JOIN_GROUP_REQUEST
-			
+			//TODO complete this
 			Map<String, String> message = new TreeMap<String, String>();
 			message.put(JSON_COMMAND, RPC_PAX_JOIN_GROUP_REQUEST);
+		} else if (operation.equals(COMMAND_USE_PAXOS)) {
+			if(!SERVER_NODE_ROLE.equals(role)) {
+				throw new IllegalStateException("Error: must be assigned as a server node to use a paxos group.");
+			}
+			
+			int nodeToUse = Integer.parseInt(split[1]);
+			paxosNodes.add(nodeToUse);
 		} else {
 			if(pending_commands.isEmpty()){
 				// start a command tick if necessary
@@ -1383,7 +1396,7 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_PAX_JOIN_GROUP_REQUEST = "requestToJoinPaxos";
 	
 	private static final String UPDATE_PAXOS_MEMBERSHIP_KEY = "paxosMembershipUpdate";
-	//private static final String PAXOS_ENTRY_POINT_MEMBER_KEY = "";
+	private static final String PAXOS_ENTRY_POINT_MEMBER_KEY = "existingGroupMember";
 
 	private PaxosModuel pax;
 	private Set<Integer> knownServers;
@@ -1540,16 +1553,24 @@ public class TwitterNode extends RIONode {
 			storedValueReply.put(JSON_PAX_ROUND, roundStr);
 			storedValueReply.put(JSON_PAX_VALUE, pax.getLearnedValue(round));	
 
-			for(Integer serverId : knownServers) {
-				paxosRpc(serverId, storedValueReply);
-			}
+			sendToAllServers(storedValueReply);
 		} else if (RPC_PAX_LEARN_ACQ.equals(command)){
 			pax.learned(round, sendingNode);
 		} else if (RPC_PAX_JOIN_GROUP_REQUEST.equals(command)){
-			//TODO
+			//TODO if the node is already part, send back membership
 		} else {
 			throw new IllegalArgumentException("unknown command: "+command);
 		}
+	}
+	
+	private void sendToAllServers(Map<String, String> message) {
+		for(Integer serverId : knownServers) {
+			paxosRpc(serverId, message);
+		}
+	}
+	
+	private void sendToAllPaxos(Map<String, String> message) {
+		//TODO
 	}
 
 	private void paxosRpc(int destNode, Map<String, String> message){
