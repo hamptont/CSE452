@@ -42,7 +42,8 @@ public class TwitterNode extends RIONode {
 
 	private String username;// the current user's username
 	private Map<String, String> tweets;// tweets received
-	private Set<Integer> servers;// servers seen/using
+	private TreeSet<Integer> servers;// servers seen/using
+	private Set<Integer> badServers; // servers suspected of being dead
 
 	private static Gson gson;// used to serialize objects for storage/packets
 	private String transaction_id;// id of the current txn on the client
@@ -50,7 +51,7 @@ public class TwitterNode extends RIONode {
 	// map of tid -> transactionState on the client
 	private Map<String, TransactionState> transactionStateMap;
 
-	//TODO are we storing all of this in file?
+	// server data
 	private Map<Integer, TransactionData> clientMap;
 	private long currentTransactionRound;
 	private Set<Integer> paxosNodes;
@@ -86,7 +87,7 @@ public class TwitterNode extends RIONode {
 
 	// usage: "n joinPaxosGroup m" where n should request to join the paxos group that m is a part of
 	private static final String COMMAND_JOIN_PAXOS = "joinPaxosGroup";
-	
+
 	// tells a paxos node to request a membership update, removing the given member from the group
 	// usage: "n removeFromPaxos m"
 	private static final String REMOVE_FROM_PAXOS_GROUP = "removeFromPaxos";
@@ -172,6 +173,7 @@ public class TwitterNode extends RIONode {
 		seq_num = 0L;
 		tweets = new HashMap<String, String>();
 		servers = new TreeSet<Integer>();
+		badServers = new TreeSet<Integer>();
 		pending_commands = new LinkedList<String>();
 		commandsInProgress = 0;
 		gson = new Gson();
@@ -181,6 +183,7 @@ public class TwitterNode extends RIONode {
 		clientMap = new TreeMap<Integer, TransactionData>();
 		currentTransactionRound = 0L;
 		knownServers = new TreeSet<Integer>();
+		
 		paxosNodes = new TreeSet<Integer>();
 		clingToLife = false;
 
@@ -244,7 +247,7 @@ public class TwitterNode extends RIONode {
 			}
 			Integer toRemove = new Integer(split[1]);
 			removeFromPaxosCallback(toRemove);
-			
+
 		} else if (operation.equals(COMMAND_SET_PAXOS_NODES)) {
 			Set<Integer> newNodes = new TreeSet<Integer>();
 			for(int i = 1; i < split.length; i++) {
@@ -301,6 +304,7 @@ public class TwitterNode extends RIONode {
 
 		if(role.equals(CLIENT_NODE_ROLE)) {
 			//msg from server, client executes code
+			serverIsLive(from);
 			if(protocol == Protocol.TWITTER_PKT){
 				processServerMessageAsClient(msg);
 			}else if(protocol == Protocol.PAXOS_PKT){
@@ -494,19 +498,19 @@ public class TwitterNode extends RIONode {
 		long roundBeingLearned = Long.parseLong(msgMap.get(JSON_PAX_ROUND));
 
 		System.out.println("message received by server from paxos: " + msgMap);
-		
+
 		// if we are out of date, simply ignore the update and request
 		// all updates starting at the current believed round
 		if(roundBeingLearned > currentTransactionRound) {
 			Map<String, String> catchupRequest = new TreeMap<String, String>();
 			catchupRequest.put(JSON_COMMAND, RPC_PAX_RECOVER_FROM_ROUND);
 			catchupRequest.put(JSON_PAX_ROUND, Long.toString(currentTransactionRound));
-			
+
 			// ask all known paxos nodes, just to speed things up
 			for(Integer paxosNode : paxosNodes) {
 				paxosRpc(paxosNode,catchupRequest);
 			}
-			
+
 			return;
 		}
 
@@ -1053,7 +1057,7 @@ public class TwitterNode extends RIONode {
 				System.out.println("No username specified. Unable to create account.");
 			} else {
 				outstandingAcks = rcp_create(parameters, seq_num);
-				callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+				callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), 5});
 				commandsInProgress++;
 			}
 		} else if(operation.equals("login")) {
@@ -1067,7 +1071,7 @@ public class TwitterNode extends RIONode {
 			}else {
 				username = parameters;
 				outstandingAcks = rcp_login(parameters, seq_num);
-				callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+				callback("login_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), 5});
 				commandsInProgress++;
 			}
 		} else if(operation.equals("logout")) {
@@ -1086,7 +1090,7 @@ public class TwitterNode extends RIONode {
 				System.out.println("You are not logged in. Please log in to post messages.");
 			} else {
 				outstandingAcks = rcp_post(parameters, seq_num);
-				callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+				callback("post_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), 5});
 				commandsInProgress++;
 			}
 		} else if(operation.equals("add")) {
@@ -1095,7 +1099,7 @@ public class TwitterNode extends RIONode {
 				System.out.println("No username specified. Unable to follow user.");
 			} else {
 				outstandingAcks = rcp_add(parameters, seq_num);
-				callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+				callback("add_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), 5});
 				commandsInProgress++;
 			}
 		} else if(operation.equals("delete")) {
@@ -1104,7 +1108,7 @@ public class TwitterNode extends RIONode {
 				System.out.println("No username specified. Unable to unfollow user.");
 			} else {
 				outstandingAcks = rcp_delete(parameters, seq_num);
-				callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+				callback("delete_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), 5});
 				commandsInProgress++;
 			}
 		} else if(operation.equals("read")) {
@@ -1112,17 +1116,17 @@ public class TwitterNode extends RIONode {
 				System.out.println("No parameters should be provided for the read command.");
 			} else {
 				outstandingAcks = rcp_read(parameters, seq_num);
-				callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+				callback("read_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), 5});
 				commandsInProgress++;
 			}
 		} else if (operation.equals(COMMAND_START_TRANSACTION)){
 			outstandingAcks = rcp_start_transaction(seq_num);
-			callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+			callback("start_transaction_callback", new String[]{"java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{outstandingAcks, servers.first(), 5});
 			commandsInProgress++;
 
 		} else if (operation.equals(COMMAND_COMMIT_TRANSACTION)){
 			outstandingAcks = rcp_commit_transaction(seq_num);
-			callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+			callback("commit_transaction_callback", new String[]{"java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{outstandingAcks, servers.first(), 5});
 			commandsInProgress++;
 
 		} else {
@@ -1173,9 +1177,9 @@ public class TwitterNode extends RIONode {
 	}
 
 	private Set<Long> rcp_create(String parameters, long seq_num){
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + TWEET_FILE_SUFFIX, seq_num);
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + FOLLOWERS_FILE_SUFFIX, seq_num + 1);
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + INFO_FILE_SUFFIX, seq_num + 2);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + TWEET_FILE_SUFFIX, seq_num);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + FOLLOWERS_FILE_SUFFIX, seq_num + 1);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_CREATE + " " + parameters + INFO_FILE_SUFFIX, seq_num + 2);
 		Set<Long> returned = new TreeSet<Long>();
 		returned.add(seq_num);
 		returned.add(seq_num + 1);
@@ -1188,7 +1192,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_login(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_READ + " " + parameters + INFO_FILE_SUFFIX, seq_num);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_READ + " " + parameters + INFO_FILE_SUFFIX, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -1196,7 +1200,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_post(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_APPEND +" " + username + TWEET_FILE_SUFFIX + " " + parameters, seq_num);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_APPEND +" " + username + TWEET_FILE_SUFFIX + " " + parameters, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -1204,7 +1208,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_add(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_APPEND + " " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_APPEND + " " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -1212,7 +1216,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_delete(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_DELETE + " " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_DELETE + " " + username + FOLLOWERS_FILE_SUFFIX + " " + parameters, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -1220,7 +1224,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_read(String parameters, long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_READ + " " + username + FOLLOWERS_FILE_SUFFIX, seq_num);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_READ + " " + username + FOLLOWERS_FILE_SUFFIX, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -1231,7 +1235,7 @@ public class TwitterNode extends RIONode {
 		Set<Long> returned = new TreeSet<Long>();
 		int count = 0;
 		for(String username: usernames){
-			rpc_call(0, Protocol.TWITTER_PKT, RPC_READ + " " + username + TWEET_FILE_SUFFIX, seq_num + count);
+			rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_READ + " " + username + TWEET_FILE_SUFFIX, seq_num + count);
 			returned.add(seq_num + count);
 			acked.put(seq_num + count, false);
 		}
@@ -1241,7 +1245,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_start_transaction(long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_START_TXN, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -1249,7 +1253,7 @@ public class TwitterNode extends RIONode {
 
 	private Set<Long> rcp_commit_transaction(long seq_num){
 		Set<Long> returned = new TreeSet<Long>();
-		rpc_call(0, Protocol.TWITTER_PKT, RPC_COMMIT, seq_num);
+		rpc_call(servers.first(), Protocol.TWITTER_PKT, RPC_COMMIT, seq_num);
 		acked.put(seq_num, false);
 		returned.add(seq_num);
 		return returned;
@@ -1307,9 +1311,10 @@ public class TwitterNode extends RIONode {
 		}
 	}
 
-	public void login_callback(String parameters, Set<Long> outstandingAcks) {
+	public void login_callback(String parameters, Set<Long> outstandingAcks, Integer serverToCall, Integer retries) {
 		System.out.println("login_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
+		deauthorizeIfDead(serverToCall, retries);
 
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
@@ -1323,13 +1328,14 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			outstandingAcks = rcp_login(parameters, min_ack);
-			callback("login_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+			callback("login_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
-	public void delete_callback(String parameters, Set<Long> outstandingAcks) {
+	public void delete_callback(String parameters, Set<Long> outstandingAcks, Integer serverToCall, Integer retries) {
 		System.out.println("delete_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
+		deauthorizeIfDead(serverToCall, retries);
 
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
@@ -1343,13 +1349,14 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_delete(parameters, min_ack);
-			callback("delete_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+			callback("delete_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
-	public void post_callback(String parameters, Set<Long> outstandingAcks) {
+	public void post_callback(String parameters, Set<Long> outstandingAcks, Integer serverToCall, Integer retries) {
 		System.out.println("post_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
+		deauthorizeIfDead(serverToCall, retries);
 
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
@@ -1363,13 +1370,14 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_post(parameters, min_ack);
-			callback("post_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+			callback("post_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
-	public void add_callback(String parameters, Set<Long> outstandingAcks) {
+	public void add_callback(String parameters, Set<Long> outstandingAcks, Integer serverToCall, Integer retries) {
 		System.out.println("add_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
+		deauthorizeIfDead(serverToCall, retries);
 
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
@@ -1383,13 +1391,14 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_add(parameters, min_ack);
-			callback("add_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+			callback("add_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
-	public void read_callback(String parameters, Set<Long> outstandingAcks) {
+	public void read_callback(String parameters, Set<Long> outstandingAcks, Integer serverToCall, Integer retries) {
 		System.out.println("read_callback called");
 		boolean all_acked = allAcked(outstandingAcks);
+		deauthorizeIfDead(serverToCall, retries);
 
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
@@ -1403,13 +1412,16 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_read(parameters, min_ack);
-			callback("read_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+			callback("read_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
-	public void read_multiple_callback(Set<String> parameters, Set<Long> outstandingAcks){
+	public void read_multiple_callback(Set<String> parameters, Set<Long> outstandingAcks, Integer serverToCall, Integer retries){
 		System.out.println("read_multiple_callback called");
 		boolean all_acked = allAcked(outstandingAcks);
+		
+		deauthorizeIfDead(serverToCall, retries);
+		
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
 				acked.remove(ack);
@@ -1426,14 +1438,15 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_read_multiple(parameters, min_ack);
-			callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+			callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
-	public void create_account_callback(String parameters, Set<Long> outstandingAcks) {
+	public void create_account_callback(String parameters, Set<Long> outstandingAcks, Integer serverToCall, Integer retries) {
 		System.out.println("create_account_callback called: " + parameters);
 		boolean all_acked = allAcked(outstandingAcks);
-
+		deauthorizeIfDead(serverToCall, retries);
+		
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
 				acked.remove(ack);
@@ -1450,14 +1463,15 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_create(parameters, min_ack);
-			callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set"}, new Object[]{parameters, outstandingAcks});
+			callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
-	public void start_transaction_callback(Set<Long> outstandingAcks) {
+	public void start_transaction_callback(Set<Long> outstandingAcks, Integer serverToCall, Integer retries) {
 		System.out.println("start_transaction_callback called: " );
 		boolean all_acked = allAcked(outstandingAcks);
-
+		deauthorizeIfDead(serverToCall, retries);
+		
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
 				acked.remove(ack);
@@ -1474,14 +1488,15 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_start_transaction(min_ack);
-			callback("start_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+			callback("start_transaction_callback", new String[]{"java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
 
-	public void commit_transaction_callback(Set<Long> outstandingAcks) {
+	public void commit_transaction_callback(Set<Long> outstandingAcks, Integer serverToCall, Integer retries) {
 		System.out.println("commit_transaction_callback called: " );
 		boolean all_acked = allAcked(outstandingAcks);
+		deauthorizeIfDead(serverToCall, retries);
 
 		if(all_acked) {
 			for(Long ack : outstandingAcks) {
@@ -1499,7 +1514,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_commit_transaction(min_ack);
-			callback("commit_transaction_callback", new String[]{"java.util.Set"}, new Object[]{outstandingAcks});
+			callback("commit_transaction_callback", new String[]{"java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{outstandingAcks, servers.first(), retries-1});
 		}
 	}
 
@@ -1523,6 +1538,26 @@ public class TwitterNode extends RIONode {
 			System.out.println("ALL MESSAGES ACKED!");
 		}
 		return all_acked;
+	}
+
+	private void serverIsLive(int serverId) {
+		badServers.remove(serverId);
+		servers.add(serverId);
+	}
+	
+	private void deauthorizeIfDead(int serverId, int retries) {
+		if(retries < 1){
+			if(badServers.contains(serverId)) {
+				
+			} else if(servers.size() > 1){
+				int badServer = servers.first();
+				servers.remove(badServer);
+				badServers.add(serverId);
+			} else {
+				servers.addAll(badServers);
+				badServers.clear();
+			}
+		}
 	}
 
 	/*
@@ -1634,7 +1669,6 @@ public class TwitterNode extends RIONode {
 			storedValueReply.put(JSON_PAX_ROUND, roundStr);
 			storedValueReply.put(JSON_PAX_VALUE, pax.getLearnedValue(round));
 			paxosRpc(sendingNode, storedValueReply);
-			return;
 		}
 
 		// server -> paxos
@@ -1748,7 +1782,7 @@ public class TwitterNode extends RIONode {
 			learnAck.put(JSON_PAX_ROUND, roundStr);
 
 			paxosRpc(sendingNode, learnAck);
-			
+
 			// propagate the new transaction value to all of the FS servers
 			Map<String, String> storedValueUpdate = new TreeMap<String, String>();
 			storedValueUpdate.put(JSON_COMMAND, RPC_PAX_STORED_VALUE);
@@ -1756,7 +1790,7 @@ public class TwitterNode extends RIONode {
 			storedValueUpdate.put(JSON_PAX_VALUE, pax.getLearnedValue(round));
 
 			sendToAllServers(storedValueUpdate);
-			
+
 			// if this is a paxos group membership update, update!
 			try{
 				Map<String, String> valueMap = (Map<String, String>)jsonToObject(pax.getLearnedValue(round), MAP_STRING_STRING_TYPE);
@@ -1779,8 +1813,7 @@ public class TwitterNode extends RIONode {
 					}
 				}
 			} catch (Exception e) {
-				e.printStackTrace();
-				System.exit(1);
+				// deliberately blank
 			}
 		} else if (RPC_PAX_LEARN_ACQ.equals(command)){
 
@@ -1859,7 +1892,7 @@ public class TwitterNode extends RIONode {
 		RIOSend(destNode, Protocol.PAXOS_PKT, Utility.stringToByteArray(json));
 		System.out.printf("Paxos to %d: %s\n", destNode,json);
 	}
-	
+
 	// to make sure we've joined a group based on our request
 	private Set<Long> latestJoinRequestRounds = new TreeSet<Long>();
 	private Set<Long> ackedJoinRequests = new TreeSet<Long>();
@@ -1867,14 +1900,14 @@ public class TwitterNode extends RIONode {
 	// a callback to request membership in a paxos group
 	public void joinPaxosGroupCallback(Integer nodeToJoinWith) {
 		boolean anyAcked = false;
-		
+
 		for(Long requestRound : latestJoinRequestRounds) {
 			if(ackedJoinRequests.contains(requestRound)) {
 				anyAcked = true;
 				break;
 			}
 		}
-		
+
 		if(!anyAcked) {
 			long nextRound = pax.getHighestLearnedRound() + 1;
 			Map<String, String> message = new TreeMap<String, String>();
@@ -1888,14 +1921,14 @@ public class TwitterNode extends RIONode {
 			System.out.println("Join successful.");
 		}
 	}
-	
+
 	public void removeFromPaxosCallback(Integer nodeToRemove) {
 		if(pax.getPaxosGroup().contains(nodeToRemove)) {
 			// while the group still contains the bad node...
-			
+
 			long newRound = pax.getHighestLearnedRound() + 1;
 			String newRoundStr = Long.toString(newRound);
-			
+
 			Map<String, String> membershipUpdateProposal = new TreeMap<String,String>();
 			membershipUpdateProposal.put(UPDATE_PAXOS_MEMBERSHIP_FLAG, "TRUE");				
 			Set<Integer> proposedGroup = new TreeSet<Integer>(pax.getPaxosGroup());
@@ -1915,7 +1948,7 @@ public class TwitterNode extends RIONode {
 
 				sendToAllPaxos(prepareMessage);
 			}
-			
+
 			// lets check back in in 6 ticks
 			callback("removeFromPaxosCallback", new String[]{"java.lang.Integer"}, new Object[]{nodeToRemove}, 6);
 		}

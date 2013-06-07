@@ -1,0 +1,90 @@
+start 0
+start 1
+start 2
+start 3
+time
+0 clingToLife
+0 assign server
+1 assign paxos
+2 assign paxos
+3 assign paxos
+time
+0 usePaxosGroup 1
+1 startPaxosGroup 1
+2 joinPaxosGroup 1
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+3 joinPaxosGroup 1
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+1 removeFromPaxos 2
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+time
+0 embraceOblivion
