@@ -174,7 +174,11 @@ public class TwitterNode extends RIONode {
 
 		if(role.equals(CLIENT_NODE_ROLE)) {
 			//msg from server, client executes code
-			processMessageAsClient(msg);
+            if(protocol == Protocol.TWITTER_PKT){
+			    processServerMessageAsClient(msg);
+            }else if(protocol == Protocol.PAXOS_PKT){
+                processPaxosMessageAsClient(msg);
+            }
 		} else if(role.equals(SERVER_NODE_ROLE) && protocol == Protocol.TWITTER_PKT){
 			//msg from client, server executes code
 			processClientMessageAsServer(msg, from);
@@ -292,7 +296,7 @@ public class TwitterNode extends RIONode {
                         if(processedTransactions.containsKey(client_transaction_identifier)){
                            // apply_changes = false;
                             response_map.put(JSON_MSG, RPC_COMMIT);
-                            System.out.println("Server sending response: " + response_map);
+                            System.out.println("Server sending response to client: " + response_map);
                             RIOSend(client_id, Protocol.TWITTER_PKT, objectToJson(response_map, MAP_STRING_STRING_TYPE).getBytes());
                             return;
                         }
@@ -458,7 +462,7 @@ public class TwitterNode extends RIONode {
 
 		response_map.put(JSON_MSG, response);
 
-		System.out.println("Server sending response: " + response_map);
+		System.out.println("Server sending response to client: " + response_map);
 		RIOSend(client_id, Protocol.TWITTER_PKT, objectToJson(response_map, MAP_STRING_STRING_TYPE).getBytes());
 	}
 
@@ -480,7 +484,7 @@ public class TwitterNode extends RIONode {
             //value learned!
             //apply changes to disk
             System.out.println();
-            //TODO
+            //TODO  apply changes to disk
 
             // populate the response we will send
             Map<String, String> response_map = new TreeMap<String, String>();
@@ -488,9 +492,12 @@ public class TwitterNode extends RIONode {
             //response_map.put(JSON_REQUEST_ID, request_id);
             response_map.put(JSON_TRANSACTION_ID, msgMap.get(JSON_TRANSACTION_ID));
 
-            System.out.println("Server sending response: " + response_map);
+
+
+            System.out.println("Server sending response (after paxos): " + response_map);
             int client_id = 128;   //TODO REMOVE HARDCODE
-            RIOSend(client_id, Protocol.TWITTER_PKT, objectToJson(response_map, mapType).getBytes());
+            System.out.println("YEEE");
+            RIOSend(client_id, Protocol.PAXOS_PKT, objectToJson(response_map, mapType).getBytes());
         }
 
         //response_map.put(JSON_MSG, response);
@@ -668,17 +675,22 @@ public class TwitterNode extends RIONode {
 	}
 
 	/*
-	 *  RIOReceive for client
+	 *  RIOReceive for client - for requests that did not go through paxos
 	 */
-	private void processMessageAsClient(byte[] msg) {		
+	private void processServerMessageAsClient(byte[] msg) {
 		String json = packetBytesToString(msg);
 		Map<String, String> map = (Map<String, String>)jsonToObject(json, MAP_STRING_STRING_TYPE);
 		String received = map.get(JSON_MSG);
 		String request_id = map.get(JSON_REQUEST_ID);
 
-		System.out.println("message received by client: " + json);
+		System.out.println("message received by client (no paxos): " + json);
 
-		String command = received.split("\\s")[0];
+        String command = "";
+        try{
+		    command = received.split("\\s")[0];
+        }catch(Exception e){
+
+        }
 		//check to see if more RCP calls need to be sent
 		if(command.equals(RPC_START_TXN)){
 			// we've received our transaction ID
@@ -723,18 +735,41 @@ public class TwitterNode extends RIONode {
 		}
 
 		this.msg = msg;
-		acked.put(Long.parseLong(request_id), true);
+
+        acked.put(Long.parseLong(request_id), true);
 	}
 
+    /*
+      *  RIOReceive for client - for requests that did not go through paxos
+      *  ACK that transaction suceeded
+      */
+    private void processPaxosMessageAsClient(byte[] msg) {
+
+        String json = packetBytesToString(msg);
+        Map<String, String> map = (Map<String, String>)jsonToObject(json, MAP_STRING_STRING_TYPE);
+        String received = map.get(JSON_MSG);
+        String request_id = map.get(JSON_REQUEST_ID);
 
 
-	/*
-	 * This method actually applies the twitter command to disk.
-	 * Should only be called after the transaction has been committed
-	 * and all commands in the transaction as been checked to see if they need to be aborted
-	 *
-	 * Processes exactly one RCP call - should be called multiple tiems for each command in the transaction.
-	 */
+        System.out.println("message received by client (from paxos): " + json);
+        String seq_num = map.get(JSON_CURRENT_SEQ_NUM);
+        String transaction_id = map.get(JSON_TRANSACTION_ID);
+
+        System.out.println("aaaseq_num: " + seq_num);
+        System.out.println("transaction_id: " + transaction_id);
+
+        asdf
+
+        //TODO   finish this
+    }
+
+        /*
+       * This method actually applies the twitter command to disk.
+       * Should only be called after the transaction has been committed
+       * and all commands in the transaction as been checked to see if they need to be aborted
+       *
+       * Processes exactly one RCP call - should be called multiple tiems for each command in the transaction.
+       */
 	private String processTransaction(Map<String, String> msgMap, Map<String, String> writeAheadLog){
 		String response = "";
 
