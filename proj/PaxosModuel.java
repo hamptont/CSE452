@@ -15,7 +15,7 @@ public class PaxosModuel {
 	private static final Type MAP_LONG_STRING_TYPE = new TypeToken<Map<Long, String>>() {}.getType();
 	private static final Type MAP_LONG_UPDATE_REQUEST_TYPE = new TypeToken<Map<Long, UpdateRequest>>() {}.getType();
 
-
+	private long paxosGroupVersion;
 	private Set<Integer> knownPaxosNodes;
 
 	private long currentProposalNumber;
@@ -50,7 +50,7 @@ public class PaxosModuel {
 	 * describes the state that a proposer needs to keep
 	 */
 	private class UpdateRequest {
-		int requestingServerId;
+		//int requestingServerId;
 		String requestedValue;
 		Set<Integer> participants;
 		Map<Integer, Promise> promised;
@@ -92,6 +92,8 @@ public class PaxosModuel {
 		// proposer
 		roundToUpdateRequest = new TreeMap<Long, UpdateRequest>();
 		//	}
+
+		paxosGroupVersion = -1L;
 	}
 
 	/**
@@ -100,7 +102,7 @@ public class PaxosModuel {
 	 * @return
 	 */
 	// proposer
-	public long startNewVote(int requestingNodeId, long round, String value) {
+	public long startNewVote(long round, String value) {
 		if((stateOfRound.get(round) == null 
 				&& roundToTransaction.get(round) == null
 				&& roundToUpdateRequest.get(round) == null)) {
@@ -108,7 +110,7 @@ public class PaxosModuel {
 			// if the current round is not in progress
 			UpdateRequest newUpdate = new UpdateRequest();
 			roundToUpdateRequest.put(round, newUpdate);
-			newUpdate.requestingServerId = requestingNodeId;
+			//newUpdate.requestingServerId = requestingNodeId;
 			newUpdate.proposalNum = currentProposalNumber;
 			newUpdate.participants = new TreeSet<Integer>(knownPaxosNodes);
 			newUpdate.requestedValue = value;
@@ -179,7 +181,7 @@ public class PaxosModuel {
 			state.value = EMPTY_VALUE;
 			state.highestAccepted = Long.MIN_VALUE;
 			state.highestPromised = Long.MIN_VALUE;
-			
+
 			stateOfRound.put(round, state);
 		} else if (state.highestPromised > n) {
 			// if we're already promised higher
@@ -219,6 +221,10 @@ public class PaxosModuel {
 	 */
 	public void learned(long round, int learnedNode) {
 		UpdateRequest request = roundToUpdateRequest.get(round);
+		if(request == null) {
+			request = new UpdateRequest();
+			roundToUpdateRequest.put(round, request);
+		}
 		if(request.learned == null){
 			request.learned = new TreeSet<Integer>();
 		}
@@ -282,8 +288,8 @@ public class PaxosModuel {
 		UpdateRequest updateReq = roundToUpdateRequest.get(round);
 		return updateReq == null ? null : updateReq.requestingServerId;
 	}
-*/
-	
+	 */
+
 	//learner
 	public String getLearnedValue(long round) {
 		return roundToTransaction.get(round);
@@ -313,7 +319,7 @@ public class PaxosModuel {
 		if(request.accepted == null) {
 			request.accepted = new TreeSet<Integer>();
 		}
-		
+
 		request.accepted.add(node);
 
 		saveStateToDisk();
@@ -321,44 +327,55 @@ public class PaxosModuel {
 		return request.accepted.size() > knownPaxosNodes.size()/2;
 	}
 
-//	/**
-//	 * Adds the given node to the paxos group
-//	 * @param node
-//	 */
-//	public void addToPaxosPool(int node) {
-//		knownPaxosNodes.add(node);
-//	}
-//
-//	/**
-//	 * Removes the given node from the paxos group
-//	 * @param node
-//	 */
-//	public void removeFromPaxosPool(int node) {
-//		knownPaxosNodes.remove(node);
-//	}
-	
+	//	/**
+	//	 * Adds the given node to the paxos group
+	//	 * @param node
+	//	 */
+	//	public void addToPaxosPool(int node) {
+	//		knownPaxosNodes.add(node);
+	//	}
+	//
+	//	/**
+	//	 * Removes the given node from the paxos group
+	//	 * @param node
+	//	 */
+	//	public void removeFromPaxosPool(int node) {
+	//		knownPaxosNodes.remove(node);
+	//	}
+
 	/**
-	 * Sets the nodes that are acting as the current paxos group.
+	 * Sets the nodes that are acting as the current paxos group, 
+	 * if the version of the proposed group is larger than the version of the current,
+	 * or if this is the first group proposed
 	 * Saves the state to disk.
 	 * @param paxosNodes
+	 * @param version
 	 */
-	public void setPaxosGroup(Set<Integer> paxosNodes) {
-		knownPaxosNodes = new TreeSet<Integer>(paxosNodes);
-		saveStateToDisk();
+	public void setPaxosGroup(Set<Integer> paxosNodes, long version) {
+		if(version > paxosGroupVersion) {
+			knownPaxosNodes = new TreeSet<Integer>(paxosNodes);
+			paxosGroupVersion = version;
+			saveStateToDisk();
+		}
 	}
 
 	/**
-	 * Returns the set of currently known nodes in the paxos group
+	 * Returns a copy of the set of nodes in the current paxos group
 	 * @return
 	 */
 	public Set<Integer> getPaxosGroup(){
 		return Collections.unmodifiableSet(knownPaxosNodes);
 	}
+	
+	public long getPaxosGroupVersion() {
+		return paxosGroupVersion;
+	}
 
+	/*
 	public PrepareResponse getNewPrepareResponse(){
 		return new PrepareResponse();
 	}
-
+*/
 	/*
         Saves the paxox node's private variables to disk in json form
 	 */
