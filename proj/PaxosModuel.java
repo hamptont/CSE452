@@ -3,7 +3,6 @@ import java.lang.reflect.Type;
 import java.util.*;
 
 import com.google.gson.reflect.TypeToken;
-import edu.washington.cs.cse490h.lib.PersistentStorageWriter;
 import edu.washington.cs.cse490h.lib.Utility;
 
 public class PaxosModuel {
@@ -72,15 +71,10 @@ public class PaxosModuel {
 
 
 	public PaxosModuel(TwitterNode encompassingNode){
-		//TODO do all the recovery/initial file creation shit
-		//	try {
-		this.encompassingNode = encompassingNode;
-		//    byte_writer = encompassingNode.getPersistentStorageWriter(PAXOS_STATE_FILENAME, false);  //~~~~
-
-		//encompassingNode.getReader(PAXOS_STATE_FILENAME);
-		//	} catch (IOException e) {
+		this.encompassingNode = encompassingNode;// for reader/writer
+		
+		paxosGroupVersion = -1L;
 		knownPaxosNodes = new TreeSet<Integer>();
-		//currentRoundOfVoting = 0;
 		currentProposalNumber = Utility.getRNG().nextLong();
 
 
@@ -91,16 +85,16 @@ public class PaxosModuel {
 		roundToTransaction = new TreeMap<Long, String>();
 		// proposer
 		roundToUpdateRequest = new TreeMap<Long, UpdateRequest>();
-		//	}
 
+		
+		recoverStateFromDisk();
+		saveStateToDisk();
 
-		paxosGroupVersion = -1L;
-
-        Set<Integer> nodes = new TreeSet<Integer>();
-        nodes.add(1);
-        nodes.add(2);
-        nodes.add(3);
-        setPaxosGroup(nodes, 0);
+//        Set<Integer> nodes = new TreeSet<Integer>();
+//        nodes.add(1);
+//        nodes.add(2);
+//        nodes.add(3);
+//        setPaxosGroup(nodes, 0);
 	}
 
 	/**
@@ -394,6 +388,7 @@ public class PaxosModuel {
 		contents.put("stateOfRound", TwitterNode.objectToJson(stateOfRound, MAP_LONG_ACCEPTORSTATE_TYPE));
 		contents.put("roundToTransaction", TwitterNode.objectToJson(roundToTransaction, MAP_LONG_STRING_TYPE));
 		contents.put("roundToUpdateRequest", TwitterNode.objectToJson(roundToUpdateRequest, MAP_LONG_UPDATE_REQUEST_TYPE));
+		contents.put("paxosGroupVersion", Long.toString(paxosGroupVersion));
 
 		Type TypeMapStringString = new TypeToken<Map<String, String>>() {}.getType();
 		String json = TwitterNode.objectToJson(contents, TypeMapStringString);
@@ -420,7 +415,7 @@ public class PaxosModuel {
 			this.stateOfRound = (Map<Long, AcceptorState>)TwitterNode.jsonToObject(file.get("stateOfRound"), MAP_LONG_ACCEPTORSTATE_TYPE);
 			this.roundToTransaction = (TreeMap<Long, String>)TwitterNode.jsonToObject(file.get("roundToTransaction"), MAP_LONG_STRING_TYPE);
 			this.roundToUpdateRequest = (Map<Long, UpdateRequest>)TwitterNode.jsonToObject(file.get("roundToUpdateRequest"), MAP_LONG_UPDATE_REQUEST_TYPE);
-
+			this.paxosGroupVersion = Long.parseLong(file.get("paxosGroupVersion"));
 			return true;
 		}catch(Exception e){
 			System.out.println("Error: unable to write paxos recovery file");
