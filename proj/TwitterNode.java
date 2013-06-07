@@ -611,13 +611,13 @@ public class TwitterNode extends RIONode {
 
 
         System.out.println("message received by client (from paxos): " + json);
-        String seq_num = map.get(JSON_CURRENT_SEQ_NUM);
+        String reqId = map.get(JSON_REQUEST_ID);
         String transaction_id = map.get(JSON_TRANSACTION_ID);
 
-        System.out.println("aaaseq_num: " + seq_num);
+        System.out.println("aaaseq_num: " + reqId);
         System.out.println("transaction_id: " + transaction_id);
 
-        acked.put(Long.parseLong(seq_num), true);
+        acked.put(Long.parseLong(reqId), true);
         transactionStateMap.put(transaction_id, TransactionState.COMMITTED);
 
 
@@ -1548,6 +1548,7 @@ public class TwitterNode extends RIONode {
 				prepareMessage.put(JSON_PAX_PROPOSAL_NUM, Long.toString(proposalNum));
 				prepareMessage.put(JSON_PAX_ROUND, roundStr);
 
+				System.out.println("PROPOSER: new vote for round started! round: "+ roundStr);
 				sendToAllPaxos(prepareMessage);
 			}
 		} else if (RPC_PAX_RECOVER_FROM_ROUND.equals(command)) {
@@ -1594,6 +1595,8 @@ public class TwitterNode extends RIONode {
 				message.put(JSON_PAX_VALUE, pax.getProposedValue(round));
 				message.put(JSON_PAX_PROPOSAL_NUM, Long.toString(pax.getProposalNumForRound(round)));
 
+				
+				System.out.println("PROPOSER: a majority have promised!: "+ roundStr);
 				sendToAllPaxos(message);
 			}
 		} else if (RPC_PAX_ACCEPT_REQUEST.equals(command)) {
@@ -1617,6 +1620,8 @@ public class TwitterNode extends RIONode {
 				learnRequest.put(JSON_COMMAND, RPC_PAX_LEARN);
 				learnRequest.put(JSON_PAX_ROUND, roundStr);
 				learnRequest.put(JSON_PAX_VALUE, msgMap.get(JSON_PAX_VALUE));
+				
+				System.out.println("PROPOSER: a majority accepted! sending to learners! value: "+ roundStr);
 
 				// send the value to the rest of the learners
 				sendToAllPaxos(learnRequest);
