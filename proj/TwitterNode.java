@@ -92,7 +92,10 @@ public class TwitterNode extends RIONode {
 	private static final String PAXOS_NODE_ROLE = "paxos";
 	private static final String CLIENT_NODE_ROLE = "client";
 
-
+    //Key names for the map representing the "value" for paxos
+    private static final String VALUE_CLIENT_ID = "client_id";
+    private static final String VALUE_TRANSACTION_ID = "transaction_id";
+    private static final String VALUE_TWITTER_COMMANDS = "twitter_commands";
 	/**
 	 * Private helper classes
 	 */
@@ -175,7 +178,7 @@ public class TwitterNode extends RIONode {
 			//msg from client, server executes code
 			processClientMessageAsServer(msg, from);
 		} else if (role.equals(SERVER_NODE_ROLE) && protocol == Protocol.PAXOS_PKT) {
-			processPaxosMessageAsServer(msg,from);
+			processPaxosMessageAsServer(msg);
 		} else if(role.equals(PAXOS_NODE_ROLE)) {
 			processMessageAsPaxos(msg, from);
 		} else {
@@ -187,6 +190,7 @@ public class TwitterNode extends RIONode {
 	 * RIOReceive method for server from client
 	 */
 	private void processClientMessageAsServer(byte[] msg, int client_id) {
+
 		String msgJson = packetBytesToString(msg);
 		Type mapType = new TypeToken<Map<String, String>>() {}.getType();
 		Map<String, String> msgMap = (Map<String, String>)jsonToObject(msgJson, mapType);
@@ -199,9 +203,6 @@ public class TwitterNode extends RIONode {
             //Only client to server messages use JSON_MSG field
             //received is null for paxos to server messages
             command = received.split("\\s")[0];
-        } else{
-            //paxos to server messages
-            command = msgMap.get(JSON_COMMAND);
         }
 
 		String response = "";
@@ -263,6 +264,8 @@ public class TwitterNode extends RIONode {
             }
 		} else if(command.equals(RPC_COMMIT)) {
 			//request to commit transaction
+
+
 			TransactionData transaction = clientMap.get(client_id);
 			if(transaction == null){
 				//no active transaction
@@ -299,9 +302,23 @@ public class TwitterNode extends RIONode {
                     //If new Transaction - send to PAXOS
                     response_map.put(JSON_COMMAND, RPC_PAX_STORE_VALUE_REQUEST);
                     response_map.put(JSON_PAX_ROUND, Long.toString(currentTransactionRound));
-                    Map<String, String> paxos_value = new TreeMap<String, String>();
-                    paxos_value.put("HELLO", "WORLD"); //TODO put value in here
+                    Map<String, Object> paxos_value = new TreeMap<String, Object>();
+
+                    paxos_value.put(VALUE_CLIENT_ID, client_id);
+                    paxos_value.put(VALUE_TRANSACTION_ID, msgMap.get(JSON_TRANSACTION_ID));
+
+                    List<String> twitter_commands = new LinkedList<String>();
+                    Map<String, String> commands = clientMap.get(client_id).rid_action_map;
+                    for(String key : commands.keySet()){
+                        Map<String, String> map = (Map<String, String>)jsonToObject(commands.get(key), mapType);
+                        String twitter_command = map.get(JSON_MSG);
+                        twitter_commands.add(twitter_command);
+                    }
+                    paxos_value.put(VALUE_TWITTER_COMMANDS, twitter_commands);
+
                     response_map.put(JSON_PAX_VALUE, objectToJson(paxos_value, mapType));
+
+                    //always send to lowest known paxos node
                     int paxos_node_to_send_to = Integer.MIN_VALUE;
                     for(Integer paxos_node : paxosNodes){
                         paxos_node_to_send_to = Math.max(paxos_node_to_send_to, paxos_node);
@@ -347,7 +364,51 @@ public class TwitterNode extends RIONode {
       /*
       * RIOReceive method for server from client
       */
-    private void processPaxosMessageAsServer(byte[] msg, int client_id) {
+    private void processPaxosMessageAsServer(byte[] msg) {
+        String msgJson = packetBytesToString(msg);
+        Type mapType = new TypeToken<Map<String, String>>() {}.getType();
+        Map<String, String> msgMap = (Map<String, String>)jsonToObject(msgJson, mapType);
+
+        System.out.println("message received by server from paxos: " + msgMap);
+
+
+        String updatePaxos = msgMap.get(UPDATE_PAXOS_MEMBERSHIP_KEY);
+        if(updatePaxos != null && updatePaxos.equals("TRUE")){
+            //update paxos membership
+        } else {
+            //value learned!
+            //apply changes to disk
+            System.out.println();
+            //TODO
+
+            // populate the response we will send
+            Map<String, String> response_map = new TreeMap<String, String>();
+            response_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
+            //response_map.put(JSON_REQUEST_ID, request_id);
+            response_map.put(JSON_TRANSACTION_ID, msgMap.get(JSON_TRANSACTION_ID));
+
+            System.out.println("Server sending response: " + response_map);
+            int client_id = 128;   //TODO REMOVE HARDCODE
+            RIOSend(client_id, Protocol.TWITTER_PKT, objectToJson(response_map, mapType).getBytes());
+        }
+
+        //response_map.put(JSON_MSG, response);
+
+
+
+        /*
+        String received = msgMap.get(JSON_MSG);
+        String request_id = msgMap.get(JSON_REQUEST_ID);
+
+        System.out.println("message received by server from paxos: " + msgJson);
+
+        String response = "";
+
+        // populate the response we will send
+        Map<String, String> response_map = new TreeMap<String, String>();
+        response_map.put(JSON_CURRENT_SEQ_NUM, Long.toString(seq_num));
+        response_map.put(JSON_REQUEST_ID, request_id);
+        response_map.put(JSON_TRANSACTION_ID, msgMap.get(JSON_TRANSACTION_ID));
 
         //If transaction has not already been applied to disk (not duplicate request)
         if(apply_changes){
@@ -399,6 +460,9 @@ public class TwitterNode extends RIONode {
 
             }
         }
+
+
+        */
     }
 
         private boolean txnMustAbort(int clientId) {

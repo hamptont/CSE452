@@ -36,7 +36,8 @@ public class Protocol {
 	 */
 	public static boolean isPktProtocolValid(int protocol) {
 		return (protocol == DATA || protocol == ACK || protocol == VOTEREQ_PKT
-				|| protocol == VOTE_PKT || protocol == DECISION_PKT || protocol == DECISIONREQ_PKT || protocol == TWITTER_PKT);
+				|| protocol == VOTE_PKT || protocol == DECISION_PKT || protocol == DECISIONREQ_PKT ||
+                protocol == TWITTER_PKT || protocol == PAXOS_PKT);
 	}
 
 	/**
@@ -51,7 +52,7 @@ public class Protocol {
 	public static boolean isRIOProtocolValid(int protocol) {
 		return (protocol == VOTEREQ_PKT || protocol == VOTE_PKT
 				|| protocol == DECISION_PKT || protocol == DECISIONREQ_PKT || protocol == RIOTEST_PKT
-        || protocol == SESSION_START || protocol == SESSION_START_ACK || protocol == TWITTER_PKT);
+        || protocol == SESSION_START || protocol == SESSION_START_ACK || protocol == TWITTER_PKT || protocol == PAXOS_PKT);
 	}
 
 	/**
