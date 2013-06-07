@@ -99,7 +99,8 @@ public class TwitterNode extends RIONode {
 	private static final String COMMAND_USE_SERVER = "useServer";
 
 	// bootstrap the creation of a paxos group
-	// usage: "n startPaxosGroup i j k..."
+	// usage: "n startPaxosGroup n i j k..."
+	// MUST INCLUDE n IN THIS LIST
 	private static final String COMMAND_SET_PAXOS_NODES = "startPaxosGroup";
 
 	// command a paxos node to act as proposer and try to get the rest to learn a value
@@ -305,6 +306,8 @@ public class TwitterNode extends RIONode {
 		if(role.equals(CLIENT_NODE_ROLE)) {
 			//msg from server, client executes code
 			serverIsLive(from);
+			// the protocol determines the structure of the packet
+			// this is used to integrate old code with new
 			if(protocol == Protocol.TWITTER_PKT){
 				processServerMessageAsClient(msg);
 			}else if(protocol == Protocol.PAXOS_PKT){
@@ -314,8 +317,10 @@ public class TwitterNode extends RIONode {
 			//msg from client, server executes code
 			processClientMessageAsServer(msg, from);
 		} else if (role.equals(SERVER_NODE_ROLE) && protocol == Protocol.PAXOS_PKT) {
+			// message from paxos
 			processPaxosMessageAsServer(msg);
 		} else if(role.equals(PAXOS_NODE_ROLE)) {
+			// paxos needs to process the message
 			processMessageAsPaxos(msg, from);
 		} else {
 			throw new IllegalStateException("Invalid node role: "+ role);
@@ -1328,7 +1333,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			outstandingAcks = rcp_login(parameters, min_ack);
-			callback("login_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
+			callback("login_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
@@ -1349,7 +1354,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_delete(parameters, min_ack);
-			callback("delete_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
+			callback("delete_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
@@ -1370,7 +1375,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_post(parameters, min_ack);
-			callback("post_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
+			callback("post_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
@@ -1391,7 +1396,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_add(parameters, min_ack);
-			callback("add_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
+			callback("add_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
@@ -1412,7 +1417,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_read(parameters, min_ack);
-			callback("read_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
+			callback("read_callback", new String[]{"java.lang.String", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
@@ -1438,7 +1443,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_read_multiple(parameters, min_ack);
-			callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
+			callback("read_multiple_callback", new String[]{"java.util.Set", "java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
@@ -1463,7 +1468,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_create(parameters, min_ack);
-			callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), retries-1});
+			callback("create_account_callback", new String[]{"java.lang.String", "java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{parameters, outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
@@ -1488,7 +1493,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_start_transaction(min_ack);
-			callback("start_transaction_callback", new String[]{"java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{outstandingAcks, servers.first(), retries-1});
+			callback("start_transaction_callback", new String[]{"java.util.Set", "java.lang.Integer", "java.lang.Integer"}, new Object[]{outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
@@ -1514,7 +1519,7 @@ public class TwitterNode extends RIONode {
 				min_ack = Math.min(num, min_ack);
 			}
 			rcp_commit_transaction(min_ack);
-			callback("commit_transaction_callback", new String[]{"java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{outstandingAcks, servers.first(), retries-1});
+			callback("commit_transaction_callback", new String[]{"java.util.Set","java.lang.Integer", "java.lang.Integer"}, new Object[]{outstandingAcks, servers.first(), (retries-1)%5});
 		}
 	}
 
