@@ -5,7 +5,13 @@ import java.util.*;
 import com.google.gson.reflect.TypeToken;
 import edu.washington.cs.cse490h.lib.Utility;
 
-public class PaxosModuel {
+/**
+ * A class to maintain the state associated Paxos.
+ * Enables proposer/learner/accepter to be on the same machine.
+ * Enabled multiple 'rounds' for concurrent rounds of Paxos.
+ *
+ */
+public class PaxosModule {
 	private static final String EMPTY_VALUE = "";
 	private static final String PAXOS_STATE_FILENAME = "paxosStateFile";
 	private static final Type SET_INT_TYPE = new TypeToken<Set<Integer>>() {}.getType();
@@ -69,8 +75,7 @@ public class PaxosModuel {
 	//private PersistentStorageWriter byte_writer; //~~~~
 	private TwitterNode encompassingNode;
 
-
-	public PaxosModuel(TwitterNode encompassingNode){
+	public PaxosModule(TwitterNode encompassingNode){
 		this.encompassingNode = encompassingNode;// for reader/writer
 		
 		paxosGroupVersion = -1L;
@@ -361,7 +366,7 @@ public class PaxosModuel {
 	}
 
 	/**
-	 * Returns a copy of the set of nodes in the current paxos group
+	 * Returns an unmodifiable reference to the set of nodes in paxos
 	 * @return
 	 */
 	public Set<Integer> getPaxosGroup(){

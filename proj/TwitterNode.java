@@ -18,6 +18,10 @@ public class TwitterNode extends RIONode {
 
 	private static final Type MAP_STRING_STRING_TYPE = new TypeToken<Map<String, String>>() {}.getType();
 
+	private boolean clingToLife;// should a life-extending callback cycle so that the simulator doesn't die off?
+	private static final String LIVE_COMMAND = "clingToLife";
+	private static final String DIE_COMMAND = "embraceOblivion";
+
 	/**
 	 * User-level acks, used to determine if a request has been fulfilled
 	 */
@@ -165,12 +169,12 @@ public class TwitterNode extends RIONode {
 		currentTransactionRound = 0L;
 		knownServers = new TreeSet<Integer>();
 		paxosNodes = new TreeSet<Integer>();
+		clingToLife = false;
 
 		// paxos module initialization
-		pax = new PaxosModuel(this);
+		pax = new PaxosModule(this);
 
 		// finish writing files, if necessary
-
 		readRecoveryFileAndApplyChanges();
 
 		// Write empty temp file
@@ -178,6 +182,69 @@ public class TwitterNode extends RIONode {
 			writeToRecovery(new TreeMap<String,  String>());
 		}catch(IOException e){
 
+		}
+	}
+
+	@Override
+	public void onCommand(String command){		
+		String[] split = command.split("\\s");
+		String operation = split[0];
+		String parameters = null;
+		try {
+			parameters = command.substring(operation.length() + 1);
+
+		}catch(Exception e){
+			//no parameters
+		}
+
+		if(operation.equals(ASSIGN_ROLE_COMMAND)) {
+			if(isValidRole(split[1])) {
+				role = split[1];
+			} else {
+				System.out.println();
+				throw new IllegalArgumentException("Error: is not a valid role: "+ split[1]);
+			}
+		} else if (operation.equals(COMMAND_JOIN_PAXOS)){
+			if(!PAXOS_NODE_ROLE.equals(role)) {
+				throw new IllegalStateException("Error: must be assigned as a paxos node to join a paxos group.");
+			}
+
+			int nodeToAsk = Integer.parseInt(split[1]);
+
+			joinPaxosGroupCallback(nodeToAsk);
+		} else if (operation.equals(COMMAND_USE_PAXOS)) {
+			if(!SERVER_NODE_ROLE.equals(role)) {
+				throw new IllegalStateException("Error: must be assigned as a server node to use a paxos group.");
+			}
+
+			int nodeToUse = Integer.parseInt(split[1]);
+			paxosNodes.add(nodeToUse);
+		} else if (operation.equals(COMMAND_USE_SERVER)) {			
+			if(!CLIENT_NODE_ROLE.equals(role)) {
+				throw new IllegalStateException("Error: must be assigned as a client node to use a server.");
+			}
+
+			servers.add(Integer.parseInt(split[1]));
+		} else if (operation.equals(REMOVE_FROM_PAXOS_GROUP)) {
+			// 
+			if(!PAXOS_NODE_ROLE.equals(role)) {
+				throw new IllegalStateException("Error: must be assigned as a paxos node to modify group membership.");
+			}
+		} else if (operation.equals(LIVE_COMMAND)) {
+			if(!clingToLife){
+				clingToLife = true;
+				liveCallback();
+			}
+		} else if (operation.equals(DIE_COMMAND)) {
+			clingToLife = false;
+		} else {
+			if(pending_commands.isEmpty()){
+				// start a command tick if necessary
+				callback("commandTickCallback", new String[0], new Object[0]);
+			}
+
+			// queue up the command
+			pending_commands.add(command);
 		}
 	}
 
@@ -393,7 +460,7 @@ public class TwitterNode extends RIONode {
 		TransactionData paxos_value = (TransactionData)jsonToObject(msgMap.get(JSON_PAX_VALUE), TransactionData.class);
 		long roundBeingLearned = Long.parseLong(msgMap.get(JSON_PAX_ROUND));
 
-		
+
 
 		System.out.println("message received by server from paxos: " + msgMap);
 
@@ -431,7 +498,7 @@ public class TwitterNode extends RIONode {
 			}catch(IOException e){
 
 			}
-			
+
 			//TODO WE MUST CHANGE THIS TO UPDATE PROPERLY
 			currentTransactionRound = Math.max(roundBeingLearned + 1, currentTransactionRound);
 
@@ -456,10 +523,10 @@ public class TwitterNode extends RIONode {
 			throw new IllegalStateException("TRANSACTION WAS NULL!!!!! clientId: "+clientId);
 			//return true;
 		}
-		
+
 		String proposedVersion = Long.toString(transaction.proposedRound);
 		Map<String, String> operations = transaction.rid_action_map;
-		
+
 		System.out.println("txnMustAbort: proposed version: "+proposedVersion);
 
 		// to keep track of which files will be wholly deleted/made in this txn
@@ -643,17 +710,17 @@ public class TwitterNode extends RIONode {
 
 		acked.put(Long.parseLong(reqId), true);
 		transactionStateMap.put(responseTid, TransactionState.COMMITTED);
-		
+
 		System.out.println("acked state: "+acked);
 		for(String tid : transactionStateMap.keySet()){
 			System.out.printf("transaction %s: "+transactionStateMap.get(tid), tid);
 		}
-		
+
 		//transaction_id = INVALID_TID;
 		/*
 		if(doneOnce)throw new IllegalStateException("WE GOT THE MESSAGE BACK AS A CLIENT!");
 		doneOnce = true;
-		*/
+		 */
 		//TODO   finish this
 	}
 
@@ -930,64 +997,7 @@ public class TwitterNode extends RIONode {
 		return CLIENT_NODE_ROLE.equals(proposedRole) || SERVER_NODE_ROLE.equals(proposedRole) || PAXOS_NODE_ROLE.equals(proposedRole);
 	}
 
-	@Override
-	public void onCommand(String command){		
-		String[] split = command.split("\\s");
-		String operation = split[0];
-		String parameters = null;
-		try {
-			parameters = command.substring(operation.length() + 1);
 
-		}catch(Exception e){
-			//no parameters
-		}
-
-		if(operation.equals(ASSIGN_ROLE_COMMAND)) {
-			if(isValidRole(split[1])) {
-				role = split[1];
-			} else {
-				System.out.println();
-				throw new IllegalArgumentException("Error: is not a valid role: "+ split[1]);
-			}
-		} else if (operation.equals(COMMAND_JOIN_PAXOS)){
-			if(!PAXOS_NODE_ROLE.equals(role)) {
-				throw new IllegalStateException("Error: must be assigned as a paxos node to join a paxos group.");
-			}
-
-			int nodeToAsk = Integer.parseInt(split[1]);
-
-			//TODO send message using request RPC_PAX_JOIN_GROUP_REQUEST
-			//TODO complete this
-			Map<String, String> message = new TreeMap<String, String>();
-			message.put(JSON_COMMAND, RPC_PAX_JOIN_GROUP_REQUEST);
-		} else if (operation.equals(COMMAND_USE_PAXOS)) {
-			if(!SERVER_NODE_ROLE.equals(role)) {
-				throw new IllegalStateException("Error: must be assigned as a server node to use a paxos group.");
-			}
-
-			int nodeToUse = Integer.parseInt(split[1]);
-			paxosNodes.add(nodeToUse);
-		} else if (operation.equals(COMMAND_USE_SERVER)) {			
-			if(!CLIENT_NODE_ROLE.equals(role)) {
-				throw new IllegalStateException("Error: must be assigned as a client node to use a server.");
-			}
-
-			servers.add(Integer.parseInt(split[1]));
-		} else if (operation.equals(REMOVE_FROM_PAXOS_GROUP)) {
-			if(!PAXOS_NODE_ROLE.equals(role)) {
-				
-			}
-		} else {
-			if(pending_commands.isEmpty()){
-				// start a command tick if necessary
-				callback("commandTickCallback", new String[0], new Object[0]);
-			}
-
-			// queue up the command
-			pending_commands.add(command);
-		}
-
-	}
 
 
 	/*
@@ -1121,6 +1131,10 @@ public class TwitterNode extends RIONode {
 		if(methodName.equals("commandTickCallback")){
 			timeout = 1;
 		}
+		callback(methodName, paramTypes, params, timeout);
+	}
+	
+	private void callback(String methodName, String[] paramTypes, Object[] params, int timeout){
 		try {
 			Callback cb = new Callback(Callback.getMethod(methodName, this, paramTypes),
 					this, params);
@@ -1221,22 +1235,31 @@ public class TwitterNode extends RIONode {
 	 * 
 	 * Used to achieve asynchronous operation demanded by the simulator
 	 */
+	
+	//spins as long as the user wants it to
+	// a hack 
+	public void liveCallback(){
+		if(clingToLife){
+			callback("liveCallback", new String[0], new Object[0], 1);
+		}
+	}
 
+	// the callback used to cycle commands through execution
 	public void commandTickCallback(){
 		TransactionState state = transactionStateMap.get(transaction_id);
 		if(commandsInProgress == 0 && !pending_commands.isEmpty()){
-			
-			
+
+
 			if(state == TransactionState.COMMITTED){
 				pending_commands.remove();
 				transaction_id = INVALID_TID;
 				throw new IllegalStateException("it's working!");
 			}else if(state == TransactionState.ABORTED){
-				
+
 				transaction_id = INVALID_TID;
 			}
-			
-			
+
+
 			if(transaction_id.equals(INVALID_TID)){				
 				active_commands.clear();
 				if(!pending_commands.isEmpty()){
@@ -1245,7 +1268,7 @@ public class TwitterNode extends RIONode {
 					active_commands.add(COMMAND_COMMIT_TRANSACTION);
 				}
 			}
-			
+
 		}
 		if(commandsInProgress == 0 && !active_commands.isEmpty()){
 			String command = active_commands.remove();
@@ -1446,7 +1469,7 @@ public class TwitterNode extends RIONode {
 			commandsInProgress--;
 			System.exit(1);
 			//throw new IllegalStateException("RIGHT HERE!!!!");
-			
+
 		} else {
 			long min_ack = Long.MAX_VALUE;
 			for(Long num : outstandingAcks){
@@ -1549,13 +1572,19 @@ public class TwitterNode extends RIONode {
 	private static final String PAXOS_ENTRY_POINT_MEMBER_KEY = "existingGroupMember";
 	private static final String NEW_GROUP_MEMBER_KEY = "newGroupMember";
 
-	private PaxosModuel pax;
+	private PaxosModule pax;
 	private Set<Integer> knownServers;
 
+	/**
+	 * process the given message as a paxos node
+	 * @param msg
+	 * @param sendingNode
+	 */
 	private void processMessageAsPaxos(byte[] msg, int sendingNode) {
 		String msgJson = packetBytesToString(msg);
 		System.out.println("msg received by paxos: " + msgJson);
 
+		// extract 
 		Map<String, String> msgMap = (Map<String, String>)jsonToObject(msgJson, MAP_STRING_STRING_TYPE);
 		String command = msgMap.get(JSON_COMMAND);
 		String roundStr = msgMap.get(JSON_PAX_ROUND);
@@ -1567,7 +1596,6 @@ public class TwitterNode extends RIONode {
 			// deliberately blank
 		}
 
-		//TODO short circuit if value already learned?
 		if(pax.getLearnedValue(round) != null && !RPC_PAX_LEARN_ACQ.equals(command)){
 			// we already learned a value, good2go
 			Map<String, String> storedValueReply = new TreeMap<String, String>();
@@ -1579,14 +1607,11 @@ public class TwitterNode extends RIONode {
 
 		// server -> paxos
 		if(RPC_PAX_STORE_VALUE_REQUEST.equals(command)) {
-			// a server is requesting that a node 
+			// a server is requesting that paxos remember a value
 			knownServers.add(sendingNode);
 
-			//TODO detect duplicate response from same client,
-			//TODO change to detect request from server
 			long proposalNum = pax.startNewVote(round, msgMap.get(JSON_PAX_VALUE));
 
-			//TODO howto deal with duplicate requests? implemented in startNewVote?
 			if(proposalNum != -1L){
 				// if a new round of voting is being started with this node as proposer
 				Map<String, String> prepareMessage = new TreeMap<String, String>();
@@ -1616,7 +1641,7 @@ public class TwitterNode extends RIONode {
 		} else if(RPC_PAX_PREPARE.equals(command)){ 
 			String proposalNumStr = msgMap.get(JSON_PAX_PROPOSAL_NUM);
 			long proposalNum = Long.parseLong(proposalNumStr);
-			PaxosModuel.PrepareResponse res = pax.prepare(round, proposalNum);
+			PaxosModule.PrepareResponse res = pax.prepare(round, proposalNum);
 
 			if(res!= null){
 				// if we have not promised to honor a higher proposal #
@@ -1741,7 +1766,7 @@ public class TwitterNode extends RIONode {
 				// we use paxos to propose a group update!
 				Map<String, String> membershipUpdateProposal = new TreeMap<String,String>();
 				membershipUpdateProposal.put(UPDATE_PAXOS_MEMBERSHIP_FLAG, "TRUE");				
-				Set<Integer> proposedGroup = pax.getPaxosGroup();
+				Set<Integer> proposedGroup = new TreeSet<Integer>(pax.getPaxosGroup());
 				proposedGroup.add(sendingNode);
 				String groupJson = objectToJson(pax.getPaxosGroup(), PAXOS_GROUP_TYPE);				
 				membershipUpdateProposal.put(JSON_PAX_GROUP_MEMBERS, groupJson);
@@ -1793,5 +1818,15 @@ public class TwitterNode extends RIONode {
 
 		RIOSend(destNode, Protocol.PAXOS_PKT, Utility.stringToByteArray(json));
 		System.out.printf("Paxos to %d: %s\n", destNode,json);
+	}
+	
+	// a callback 
+	private void joinPaxosGroupCallback(int nodeToJoinWith) {
+		if(!pax.getPaxosGroup().contains(nodeToJoinWith)) {
+			Map<String, String> message = new TreeMap<String, String>();
+			message.put(JSON_COMMAND, RPC_PAX_JOIN_GROUP_REQUEST);
+			message.put(PAXOS_ENTRY_POINT_MEMBER_KEY, Integer.toString(nodeToJoinWith));
+			paxosRpc(nodeToJoinWith, message);
+		}
 	}
 }
