@@ -494,7 +494,7 @@ public class TwitterNode extends RIONode {
         System.out.println("message received by server from paxos: " + msgMap);
 
 
-        String updatePaxos = msgMap.get(UPDATE_PAXOS_MEMBERSHIP_KEY);
+        String updatePaxos = msgMap.get(UPDATE_PAXOS_MEMBERSHIP_FLAG);
         if(updatePaxos != null && updatePaxos.equals("TRUE")){
             //update paxos membership
         } else {
@@ -1624,7 +1624,7 @@ public class TwitterNode extends RIONode {
 	private static final String RPC_PAX_JOIN_GROUP_REQUEST = "requestToJoinPaxos";
 	private static final String RPC_PAX_JOIN_GROUP_CONFIRM = "joinRequestGranted";
 
-	private static final String UPDATE_PAXOS_MEMBERSHIP_KEY = "paxosMembershipUpdate";
+	private static final String UPDATE_PAXOS_MEMBERSHIP_FLAG = "paxosMembershipUpdate";
 	private static final String PAXOS_ENTRY_POINT_MEMBER_KEY = "existingGroupMember";
 	private static final String NEW_GROUP_MEMBER_KEY = "newGroupMember";
 
@@ -1726,7 +1726,6 @@ public class TwitterNode extends RIONode {
 			long proposalNum = Long.parseLong(proposalNumStr);
 			boolean success = pax.propose(round, proposalNum, msgMap.get(JSON_PAX_VALUE));
 			if(success){
-                System.out.println("~~~~~");
 				// if we are accepting that value
 				Map<String, String> response = new TreeMap<String, String>();
 				response.put(JSON_COMMAND, RPC_PAX_ACCEPTED);
@@ -1777,20 +1776,22 @@ public class TwitterNode extends RIONode {
 			sendToAllServers(storedValueReply);
 			try{
 				Map<String, String> valueMap = (Map<String, String>)jsonToObject(pax.getLearnedValue(round), MAP_STRING_STRING_TYPE);
-				if(valueMap.get(UPDATE_PAXOS_MEMBERSHIP_KEY) != null){
+				if(valueMap.get(UPDATE_PAXOS_MEMBERSHIP_FLAG) != null){
 					// if this is a group membership update, try updating
 					String groupMembershipJson = valueMap.get(JSON_PAX_GROUP_MEMBERS);
 					Set<Integer> newGroup = (Set<Integer>)jsonToObject(groupMembershipJson, PAXOS_GROUP_TYPE);
 					long newGroupVersion = Long.parseLong(valueMap.get(JSON_PAX_ROUND));
 					pax.setPaxosGroup(newGroup, newGroupVersion);
 					
-					// and send a confirmation to the new guy
-					int newNode = Integer.parseInt(valueMap.get(NEW_GROUP_MEMBER_KEY));
-					Map<String, String> groupJoinConfirmation = new TreeMap<String, String>();
-					groupJoinConfirmation.put(JSON_COMMAND, RPC_PAX_JOIN_GROUP_CONFIRM);
-					groupJoinConfirmation.put(JSON_PAX_GROUP_MEMBERS, valueMap.get(JSON_PAX_GROUP_MEMBERS));
-					groupJoinConfirmation.put(JSON_PAX_ROUND, valueMap.get(JSON_PAX_ROUND));
-					paxosRpc(newNode, groupJoinConfirmation);
+					if(valueMap.get(NEW_GROUP_MEMBER_KEY) != null) {
+						// and make sure the new guys gets it
+						int newNode = Integer.parseInt(valueMap.get(NEW_GROUP_MEMBER_KEY));
+						Map<String, String> groupJoinConfirmation = new TreeMap<String, String>();
+						groupJoinConfirmation.put(JSON_COMMAND, RPC_PAX_JOIN_GROUP_CONFIRM);
+						groupJoinConfirmation.put(JSON_PAX_GROUP_MEMBERS, valueMap.get(JSON_PAX_GROUP_MEMBERS));
+						groupJoinConfirmation.put(JSON_PAX_ROUND, valueMap.get(JSON_PAX_ROUND));
+						paxosRpc(newNode, groupJoinConfirmation);
+					}					
 				}
 			} catch (Exception e) {
 				// intentionally blank
@@ -1800,7 +1801,7 @@ public class TwitterNode extends RIONode {
 		} else if (RPC_PAX_JOIN_GROUP_REQUEST.equals(command)){
 			// a node is sending a request to join the paxos group
 			if(pax.getPaxosGroup().contains(sendingNode)) {
-				// we're done' it just needs to be informed of the results
+				// we're done it just needs to be informed of the results
 				Map<String, String> membershipResponse = new TreeMap<String, String>();
 				membershipResponse.put(JSON_COMMAND, RPC_PAX_JOIN_GROUP_CONFIRM);
 
@@ -1813,7 +1814,7 @@ public class TwitterNode extends RIONode {
 			} else {
 				// we use paxos to propose a group update!
 				Map<String, String> membershipUpdateProposal = new TreeMap<String,String>();
-				membershipUpdateProposal.put(UPDATE_PAXOS_MEMBERSHIP_KEY, "TRUE");				
+				membershipUpdateProposal.put(UPDATE_PAXOS_MEMBERSHIP_FLAG, "TRUE");				
 				Set<Integer> proposedGroup = pax.getPaxosGroup();
 				proposedGroup.add(sendingNode);
 				String groupJson = objectToJson(pax.getPaxosGroup(), PAXOS_GROUP_TYPE);				
