@@ -16,9 +16,9 @@ public class PaxosModule {
 	private static final String PAXOS_STATE_FILENAME = "paxosStateFile";
 	private static final Type SET_INT_TYPE = new TypeToken<Set<Integer>>() {}.getType();
 	private static final Type LONG_TYPE = new TypeToken<Long>() {}.getType();
-	private static final Type MAP_LONG_ACCEPTORSTATE_TYPE = new TypeToken<Map<Long, AcceptorState>>() {}.getType();
-	private static final Type MAP_LONG_STRING_TYPE = new TypeToken<Map<Long, String>>() {}.getType();
-	private static final Type MAP_LONG_UPDATE_REQUEST_TYPE = new TypeToken<Map<Long, UpdateRequest>>() {}.getType();
+	private static final Type MAP_LONG_ACCEPTORSTATE_TYPE = new TypeToken<TreeMap<Long, AcceptorState>>() {}.getType();
+	private static final Type MAP_LONG_STRING_TYPE = new TypeToken<TreeMap<Long, String>>() {}.getType();
+	private static final Type MAP_LONG_UPDATE_REQUEST_TYPE = new TypeToken<TreeMap<Long, UpdateRequest>>() {}.getType();
 
 	private long paxosGroupVersion;
 	private Set<Integer> knownPaxosNodes;
@@ -78,7 +78,7 @@ public class PaxosModule {
 	public PaxosModule(TwitterNode encompassingNode){
 		this.encompassingNode = encompassingNode;// for reader/writer
 		
-		paxosGroupVersion = -1L;
+		paxosGroupVersion = -2L;
 		knownPaxosNodes = new TreeSet<Integer>();
 		currentProposalNumber = Utility.getRNG().nextLong();
 
@@ -94,12 +94,6 @@ public class PaxosModule {
 		
 		recoverStateFromDisk();
 		saveStateToDisk();
-
-//        Set<Integer> nodes = new TreeSet<Integer>();
-//        nodes.add(1);
-//        nodes.add(2);
-//        nodes.add(3);
-//        setPaxosGroup(nodes, 0);
 	}
 
 	/**
@@ -122,7 +116,6 @@ public class PaxosModule {
 			newUpdate.requestedValue = value;
 
 			return currentProposalNumber++;
-			//TODO implement check for identical request that has already been issued
 		} else {
 			return -1L;  
 		}    	  	
@@ -273,7 +266,6 @@ public class PaxosModule {
 			majorityPromised = false;
 		}        
 
-		//TODO should this be here or above??
 		saveStateToDisk();
 
 		return majorityPromised;
@@ -288,13 +280,6 @@ public class PaxosModule {
 		UpdateRequest updateReq = roundToUpdateRequest.get(round);
 		return updateReq == null ? -1L : updateReq.proposalNum;
 	}
-
-	/*
-	public int getProposingNodeId(long round){
-		UpdateRequest updateReq = roundToUpdateRequest.get(round);
-		return updateReq == null ? null : updateReq.requestingServerId;
-	}
-	 */
 
 	//learner
 	public String getLearnedValue(long round) {
@@ -375,6 +360,13 @@ public class PaxosModule {
 	
 	public long getPaxosGroupVersion() {
 		return paxosGroupVersion;
+	}
+	
+	public long getHighestLearnedRound() {
+		if(roundToTransaction.isEmpty()) {
+			return -1L;
+		}
+		return roundToTransaction.lastKey();
 	}
 
 	/*
