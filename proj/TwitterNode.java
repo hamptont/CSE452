@@ -387,7 +387,7 @@ public class TwitterNode extends RIONode {
 		TransactionData paxos_value = (TransactionData)jsonToObject(msgMap.get(JSON_PAX_VALUE), TransactionData.class);
 		long roundBeingLearned = Long.parseLong(msgMap.get(JSON_PAX_ROUND));
 
-		currentTransactionRound = Math.max(roundBeingLearned + 1, currentTransactionRound);
+		
 
 		System.out.println("message received by server from paxos: " + msgMap);
 
@@ -425,6 +425,9 @@ public class TwitterNode extends RIONode {
 			}catch(IOException e){
 
 			}
+			
+			//TODO WE MUST CHANGE THIS TO UPDATE PROPERLY
+			currentTransactionRound = Math.max(roundBeingLearned + 1, currentTransactionRound);
 
 			// populate the response we will send
 			Map<String, String> response_map = new TreeMap<String, String>();
@@ -435,7 +438,7 @@ public class TwitterNode extends RIONode {
 			System.out.println("Server sending response (after paxos): " + response_map);
 			int client_id = paxos_value.client_id;
 			RIOSend(client_id, Protocol.PAXOS_PKT, objectToJson(response_map, MAP_STRING_STRING_TYPE).getBytes());
-
+			clientMap.remove(client_id);
 		}
 	}
 
@@ -614,6 +617,7 @@ public class TwitterNode extends RIONode {
 	 *  RIOReceive for client - for requests that did not go through paxos
 	 *  ACK that transaction suceeded
 	 */
+	private boolean doneOnce = false;
 	private void processPaxosMessageAsClient(byte[] msg) {
 
 		String json = packetBytesToString(msg);
@@ -622,20 +626,24 @@ public class TwitterNode extends RIONode {
 
 		System.out.println("message received by client (from paxos): " + json);
 		String reqId = map.get(JSON_REQUEST_ID);
-		String transaction_id = map.get(JSON_TRANSACTION_ID);
+		String responseTid = map.get(JSON_TRANSACTION_ID);
 
 		System.out.println("aaaseq_num: " + reqId);
-		System.out.println("transaction_id: " + transaction_id);
+		System.out.println("responseTid: " + responseTid);
 
 		acked.put(Long.parseLong(reqId), true);
-		transactionStateMap.put(transaction_id, TransactionState.COMMITTED);
+		transactionStateMap.put(responseTid, TransactionState.COMMITTED);
 		
 		System.out.println("acked state: "+acked);
 		for(String tid : transactionStateMap.keySet()){
 			System.out.printf("transaction %s: "+transactionStateMap.get(tid), tid);
 		}
 		
-		//throw new IllegalStateException("WE GOT THE MESSAGE BACK AS A CLIENT!");
+		//transaction_id = INVALID_TID;
+		/*
+		if(doneOnce)throw new IllegalStateException("WE GOT THE MESSAGE BACK AS A CLIENT!");
+		doneOnce = true;
+		*/
 		//TODO   finish this
 	}
 
@@ -1203,14 +1211,19 @@ public class TwitterNode extends RIONode {
 	public void commandTickCallback(){
 		TransactionState state = transactionStateMap.get(transaction_id);
 		if(commandsInProgress == 0 && !pending_commands.isEmpty()){
+			
+			
 			if(state == TransactionState.COMMITTED){
 				pending_commands.remove();
 				transaction_id = INVALID_TID;
 			}else if(state == TransactionState.ABORTED){
+				
 				transaction_id = INVALID_TID;
+				throw new IllegalStateException("weird");
 			}
-
-			if(transaction_id.equals(INVALID_TID)){
+			
+			
+			if(transaction_id.equals(INVALID_TID)){				
 				active_commands.clear();
 				if(!pending_commands.isEmpty()){
 					active_commands.add(COMMAND_START_TRANSACTION);
@@ -1218,6 +1231,7 @@ public class TwitterNode extends RIONode {
 					active_commands.add(COMMAND_COMMIT_TRANSACTION);
 				}
 			}
+			
 		}
 		if(commandsInProgress == 0 && !active_commands.isEmpty()){
 			String command = active_commands.remove();
